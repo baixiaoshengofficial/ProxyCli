@@ -17,13 +17,15 @@ A lightweight, powerful proxy management script for Bash and Zsh, onekey config 
 ### One-line Install 
 
 ```bash
-bash <(curl -sSL baixiaosheng.de/proxycli)
+bash <(curl -sSL baixiaosheng.de/proxycli) && source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
+
+The `source` step loads the installed or updated commands into the current shell. Without it, an existing terminal continues using the previously loaded functions until restarted.
 
 GitHub Raw fallback:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/baixiaoshengofficial/ProxyCli/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/baixiaoshengofficial/ProxyCli/main/install.sh) && source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
 
 ### One-line Uninstall 
@@ -69,9 +71,9 @@ bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
 
 ## Proxy Detection
 
-`pstart` is passive: it quickly checks whether the cached local port is still listening and reuses it when valid. If the cached or default ports are unavailable, it automatically scans again. `pscan` is active: it always performs a fresh scan and enables the result. A scan prioritizes common proxy processes, checks the configured candidate ports, and finally checks other local listeners. Every candidate is verified as HTTP and SOCKS5 independently. Run `pstatus` separately for full connectivity checks.
+`pstart` is passive: it reports and checks each cached local endpoint, then reuses it when valid. If the cached or default ports are unavailable, it automatically scans again. `pscan` is active: it always performs a fresh scan and enables the result. Scan progress shows the candidate list, current port, pending protocols, and detected results. A scan prioritizes common proxy processes, checks the configured candidate ports, and finally checks other local listeners. Run `pstatus` separately for full connectivity checks.
 
-The defaults are `7890 7891 7892 7893 8888 8080`. Change them for the current shell when needed:
+The defaults are `7890 7891 7892 7893 7897 8888 8080`. Change them for the current shell when needed:
 
 ```bash
 pports 7890 1080 8080

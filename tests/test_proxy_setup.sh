@@ -98,26 +98,54 @@ test_fast_restart() (
 )
 
 test_cached_listener_check() (
+  local cached_output
+
   # shellcheck source=/dev/null
   source "$repo_root/src/proxy-setup.sh" >/dev/null
 
   PROXY_ADDRESS="http://127.0.0.1:7890"
   SOCKS_ADDRESS=""
   _proxycli_listeners() { printf '%s\n' '0 7890' '1 8080'; }
-  _proxycli_cached_proxy_available
+  cached_output=$(_proxycli_cached_proxy_available 2>&1)
+  case "$cached_output" in
+    *"Cached check: HTTP on 127.0.0.1:7890."*"all proxy ports are listening."*) ;;
+    *)
+      echo "FAIL: passive cache check should describe its endpoint and result" >&2
+      exit 1
+      ;;
+  esac
 
   SOCKS_ADDRESS="socks5://127.0.0.1:1080"
-  if _proxycli_cached_proxy_available; then
+  if _proxycli_cached_proxy_available >/dev/null 2>&1; then
     echo "FAIL: all cached proxy endpoints must still be listening" >&2
     exit 1
   fi
 
   PROXY_ADDRESS="http://127.0.0.1:9000"
   SOCKS_ADDRESS=""
-  if _proxycli_cached_proxy_available; then
+  if _proxycli_cached_proxy_available >/dev/null 2>&1; then
     echo "FAIL: a missing cached listener should be unavailable" >&2
     exit 1
   fi
+)
+
+test_scan_progress() (
+  local output
+
+  # shellcheck source=/dev/null
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  _proxycli_candidate_ports() { printf '%s\n' 7890; }
+  _proxycli_probe_http_url() { return 0; }
+  _proxycli_probe_socks_url() { return 1; }
+
+  output=$(detect_proxy 2>&1)
+  case "$output" in
+    *"Scan candidates: 7890."*"Scanning 127.0.0.1:7890 for HTTP, SOCKS5."*"Found HTTP proxy on port 7890."*) ;;
+    *)
+      echo "FAIL: scan progress should show candidates, port, protocols, and result" >&2
+      exit 1
+      ;;
+  esac
 )
 
 test_detection_order() (
@@ -209,11 +237,29 @@ test_lsof_process_priority() (
       'p100' 'cnode' 'PTCP' 'n127.0.0.1:8001' \
       'p200' 'cmihomo' 'PTCP' 'n*:7001'
   }
+  ss() { return 0; }
+  netstat() { return 0; }
 
   assert_equals \
-    $'1 8001\n0 7001' \
+    $'1 8001 node\n0 7001 mihomo' \
     "$(_proxycli_listeners)" \
     "lsof listeners include proxy-process priority"
+)
+
+test_listener_tool_fallback() (
+  # shellcheck source=/dev/null
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+
+  lsof() { return 0; }
+  ss() {
+    printf '%s\n' 'LISTEN 0 4096 0.0.0.0:7897 0.0.0.0:* users:(("verge-mihomo",pid=200,fd=8))'
+  }
+  netstat() { return 0; }
+
+  assert_equals \
+    "0 7897 verge-mihomo" \
+    "$(_proxycli_listeners)" \
+    "ss is used when lsof returns no listeners"
 )
 
 test_status_uses_full_proxy_url() (
@@ -243,7 +289,7 @@ test_status_uses_full_proxy_url() (
 )
 
 test_installer_configuration() {
-  local temp_home config_file marker_count
+  local temp_home config_file install_output marker_count
 
   temp_home=$(mktemp -d)
   config_file="$temp_home/.bashrc"
@@ -266,6 +312,35 @@ test_installer_configuration() {
     marker_count=$(grep -cF "$MARKER_BEGIN" "$config_file")
     assert_equals "1" "$marker_count" "installer writes one configuration block"
 
+    mkdir -p "${INSTALL_DIR}/src"
+    printf '%s\n' 'old runtime' > "$SOURCE_FILE"
+    curl() {
+      local output_file=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          -o)
+            output_file=$2
+            shift 2
+            ;;
+          *) shift ;;
+        esac
+      done
+      cp "$repo_root/src/proxy-setup.sh" "$output_file"
+    }
+
+    install_output=$(install_proxycli)
+    case "$install_output" in
+      *"Updated runtime: $SOURCE_FILE"*) ;;
+      *)
+        echo "FAIL: reinstall should report that the runtime was updated" >&2
+        exit 1
+        ;;
+    esac
+    grep -q "alias pscan=" "$SOURCE_FILE" || {
+      echo "FAIL: reinstall should overwrite the old runtime" >&2
+      exit 1
+    }
+
     remove_config_block "$config_file"
     assert_equals $'keep-before\nkeep-after' "$(cat "$config_file")" "installer removes only its configuration"
   )
@@ -282,10 +357,12 @@ fi
 test_runtime
 test_fast_restart
 test_cached_listener_check
+test_scan_progress
 test_detection_order
 test_scan_port_configuration
 test_socks_only_detection
 test_lsof_process_priority
+test_listener_tool_fallback
 test_status_uses_full_proxy_url
 test_installer_configuration
 

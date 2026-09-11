@@ -105,7 +105,7 @@ configure_shell() {
 }
 
 install_proxycli() {
-  local shell_type config_file temp_file
+  local action="Installed" shell_type config_file temp_file
 
   command -v curl >/dev/null 2>&1 || {
     print_error "curl is required to install ${PROJECT_NAME}."
@@ -113,6 +113,7 @@ install_proxycli() {
   }
   shell_type=$(detect_shell) || return 1
   config_file=$(find_shell_config "$shell_type")
+  [ -f "$SOURCE_FILE" ] && action="Updated"
 
   mkdir -p "${INSTALL_DIR}/src" || {
     print_error "Could not create ${INSTALL_DIR}."
@@ -145,7 +146,9 @@ install_proxycli() {
     return 1
   }
 
-  print_success "Installed. Reload your shell or run: . \"${SOURCE_FILE}\""
+  print_success "${action} runtime: ${SOURCE_FILE}"
+  print_success "Load this version in the current shell:"
+  printf '  . "%s"\n' "$SOURCE_FILE"
 }
 
 uninstall_proxycli() {

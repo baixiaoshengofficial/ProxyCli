@@ -17,13 +17,15 @@
 ### 一行命令安装
 
 ```bash
-bash <(curl -sSL baixiaosheng.de/proxycli)
+bash <(curl -sSL baixiaosheng.de/proxycli) && source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
+
+其中 `source` 用于将安装或更新后的命令立即加载到当前 shell。省略该步骤时，已经打开的终端会继续使用之前加载的函数，直到重新启动终端。
 
 GitHub Raw 备用方式：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/baixiaoshengofficial/ProxyCli/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/baixiaoshengofficial/ProxyCli/main/install.sh) && source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
 
 ### 一行命令卸载
@@ -66,9 +68,9 @@ bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
 
 ## 代理识别
 
-`pstart` 是被动模式：它会快速检查缓存的本地端口是否仍在监听，有效时直接复用；缓存或默认端口无效时才自动重新扫描。`pscan` 是主动模式：每次都会强制重新识别并启用结果。扫描时会依次检测常见代理进程监听的端口、配置的候选端口以及其他本地监听端口，并分别验证 HTTP 和 SOCKS5 协议。完整连通性检查请单独执行 `pstatus`。
+`pstart` 是被动模式：它会显示并检查每个缓存端点是否仍在监听，有效时直接复用；缓存或默认端口无效时才自动重新扫描。`pscan` 是主动模式：每次都会强制重新识别并启用结果。扫描进度会显示候选端口、当前端口、待验证协议和识别结果；扫描顺序依次为常见代理进程端口、配置的候选端口以及其他本地监听端口。完整连通性检查请单独执行 `pstatus`。
 
-默认候选端口为 `7890 7891 7892 7893 8888 8080`。需要时可在当前 shell 中修改：
+默认候选端口为 `7890 7891 7892 7893 7897 8888 8080`。需要时可在当前 shell 中修改：
 
 ```bash
 pports 7890 1080 8080

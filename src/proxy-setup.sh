@@ -3,7 +3,7 @@
 
 # The endpoint is configurable for users in restricted networks.
 PROXYCLI_TEST_URL="${PROXYCLI_TEST_URL:-https://example.com/}"
-_PROXYCLI_DEFAULT_PORTS="7890 7891 7892 7893 8888 8080"
+_PROXYCLI_DEFAULT_PORTS="7890 7891 7892 7893 7897 8888 8080"
 _PROXYCLI_SCAN_PORTS="$_PROXYCLI_DEFAULT_PORTS"
 _PROXYCLI_AUTO_READY=0
 PROXYCLI_MANUAL_PROXY="${PROXYCLI_MANUAL_PROXY:-0}"
@@ -31,37 +31,59 @@ _proxycli_listeners() {
         sub(/.*:/, "", port)
         if (port ~ /^[0-9]+$/) {
           priority = command ~ proxy_processes ? 0 : 1
-          print priority, port
+          print priority, port, command
         }
       }
     '
-  elif command -v ss >/dev/null 2>&1; then
+  fi
+
+  if command -v ss >/dev/null 2>&1; then
     ss -ltnpH 2>/dev/null | awk -v proxy_processes="$_PROXYCLI_PROCESS_PATTERN" '
       {
         port = $4
         sub(/.*:/, "", port)
         if (port ~ /^[0-9]+$/) {
           line = tolower($0)
-          priority = line ~ proxy_processes ? 0 : 1
-          print priority, port
+          count = split(line, fields, "\"")
+          process = count >= 2 ? fields[2] : "unknown"
+          if (process ~ proxy_processes) {
+            priority = 0
+          } else {
+            priority = 1
+          }
+          print priority, port, process
         }
       }
     '
-  elif command -v netstat >/dev/null 2>&1; then
+  fi
+
+  if command -v netstat >/dev/null 2>&1; then
     netstat -an 2>/dev/null | awk '
       /LISTEN/ {
         port = $4
         sub(/.*[.:]/, "", port)
-        if (port ~ /^[0-9]+$/) print 1, port
+        if (port ~ /^[0-9]+$/) print 1, port, "unknown"
       }
     '
   fi
 }
 
 _proxycli_candidate_ports() {
-  local listeners
+  local listeners proxy_listeners
 
   listeners="$(_proxycli_listeners)"
+  proxy_listeners=$(printf '%s\n' "$listeners" | awk '
+    $1 == 0 && !seen[$2]++ {
+      item = ($3 && $3 != "unknown" ? $3 : "proxy") ":" $2
+      result = result (result ? " " : "") item
+    }
+    END { print result }
+  ')
+  if [ -n "$proxy_listeners" ]; then
+    echo "[ProxyCli] Proxy process listeners: $proxy_listeners." >&2
+  else
+    echo "[ProxyCli] Proxy process listeners: none detected." >&2
+  fi
   {
     printf '%s\n' "${PROXYCLI_LAST_HTTP_PORT:-}" "${PROXYCLI_LAST_SOCKS_PORT:-}"
     printf '%s\n' "$listeners" | awk '$1 == 0 { print $2 }'
@@ -73,31 +95,41 @@ _proxycli_candidate_ports() {
 }
 
 _proxycli_cached_proxy_available() {
-  local checked=0 endpoint listeners port
+  local checked=0 endpoint label listeners port
 
   listeners="$(_proxycli_listeners)"
-  [ -n "$listeners" ] || return 1
+  if [ -z "$listeners" ]; then
+    echo "[ProxyCli] Cached check: no matching local listeners were found." >&2
+    return 1
+  fi
 
   for endpoint in "${PROXY_ADDRESS:-}" "${SOCKS_ADDRESS:-}"; do
     [ -n "$endpoint" ] || continue
     checked=1
     port="${endpoint##*:}"
     port="${port%%/*}"
+    case "$endpoint" in
+      socks*) label="SOCKS5" ;;
+      *) label="HTTP" ;;
+    esac
+    echo "[ProxyCli] Cached check: ${label} on 127.0.0.1:${port}." >&2
     if ! printf '%s\n' "$listeners" | awk -v expected="$port" '$2 == expected { found = 1 } END { exit !found }'; then
+      echo "[ProxyCli] Cached check: port ${port} is no longer listening." >&2
       return 1
     fi
   done
+  [ "$checked" = "1" ] && echo "[ProxyCli] Cached check: all proxy ports are listening." >&2
   [ "$checked" = "1" ]
 }
 
 _proxycli_probe_http_url() {
   curl -sS --connect-timeout 1 --max-time 3 \
-    --proxy "$1" "$PROXYCLI_TEST_URL" >/dev/null 2>&1
+    --noproxy "" --proxy "$1" "$PROXYCLI_TEST_URL" >/dev/null 2>&1
 }
 
 _proxycli_probe_socks_url() {
   curl -sS --connect-timeout 1 --max-time 3 \
-    --proxy "$1" "$PROXYCLI_TEST_URL" >/dev/null 2>&1
+    --noproxy "" --proxy "$1" "$PROXYCLI_TEST_URL" >/dev/null 2>&1
 }
 
 _proxycli_use_existing_proxy() {
@@ -167,7 +199,7 @@ _proxycli_add_local_no_proxy() {
 # Detect HTTP and SOCKS5 listeners independently. Cached and proxy-process
 # ports are tried first, followed by configured and other listening ports.
 detect_proxy() {
-  local port scan_now scan_started http_port="" socks_port=""
+  local candidate_ports pending port scan_now scan_started http_port="" socks_port=""
 
   _PROXYCLI_AUTO_READY=0
 
@@ -176,13 +208,26 @@ detect_proxy() {
     return 1
   fi
 
+  candidate_ports="$(_proxycli_candidate_ports)"
+  if [ -z "$candidate_ports" ]; then
+    echo "[ProxyCli] Scan: no candidate ports were found." >&2
+    return 1
+  fi
+
+  echo "[ProxyCli] Scan candidates: $(printf '%s\n' "$candidate_ports" | awk '{ ports = ports (ports ? " " : "") $1 } END { print ports }')." >&2
   scan_started=${SECONDS:-0}
-  for port in $(_proxycli_candidate_ports); do
+  for port in $candidate_ports; do
+    pending=""
+    [ -z "$http_port" ] && pending="HTTP"
+    [ -z "$socks_port" ] && pending="${pending:+$pending, }SOCKS5"
+    echo "[ProxyCli] Scanning 127.0.0.1:${port} for ${pending}." >&2
     if [ -z "$http_port" ] && _proxycli_probe_http_url "http://127.0.0.1:$port"; then
       http_port="$port"
+      echo "[ProxyCli] Found HTTP proxy on port ${port}." >&2
     fi
     if [ -z "$socks_port" ] && _proxycli_probe_socks_url "socks5h://127.0.0.1:$port"; then
       socks_port="$port"
+      echo "[ProxyCli] Found SOCKS5 proxy on port ${port}." >&2
     fi
     [ -n "$http_port" ] && [ -n "$socks_port" ] && break
     scan_now=${SECONDS:-0}
@@ -227,11 +272,12 @@ start_proxy() {
     if [ "$_PROXYCLI_AUTO_READY" = "1" ] && _proxycli_cached_proxy_available; then
       echo "[ProxyCli] Reusing the last detected proxy." >&2
     elif [ "$_PROXYCLI_AUTO_READY" = "1" ]; then
-      echo "[ProxyCli] Cached proxy is unavailable; scanning again." >&2
+      echo "[ProxyCli] Passive mode: cached proxy is unavailable; starting a new scan." >&2
       detect_proxy || return 1
     elif [ "$was_saved" != "1" ] && _proxycli_use_existing_proxy; then
       echo "[ProxyCli] Reusing existing proxy environment." >&2
     elif ! detect_proxy; then
+      echo "[ProxyCli] Passive mode: no reusable proxy; automatic scan failed." >&2
       return 1
     fi
   fi
@@ -262,6 +308,7 @@ start_proxy() {
 }
 
 scan_proxy() {
+  echo "[ProxyCli] Active mode: scanning local ports for HTTP and SOCKS5 proxies." >&2
   if ! detect_proxy; then
     return 1
   fi
