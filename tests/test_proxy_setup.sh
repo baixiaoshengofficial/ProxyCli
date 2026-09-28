@@ -23,7 +23,13 @@ test_runtime() (
   # shellcheck source=/dev/null
   source "$repo_root/src/proxy-setup.sh" >/dev/null
 
-  set_proxy "127.0.0.1:7890" >/dev/null
+  set_proxy --address "127.0.0.1:7890" >/dev/null
+  if set_proxy 127.0.0.1:7890 >/dev/null 2>&1 || set_proxy --auto >/dev/null 2>&1; then
+    echo "FAIL: old pset syntax should be rejected" >&2
+    exit 1
+  fi
+  assert_equals "$original_http" "$http_proxy" "setting an address does not start the shell proxy"
+  start_proxy >/dev/null
   assert_equals "http://127.0.0.1:7890" "$http_proxy" "manual HTTP proxy is enabled"
   assert_equals "socks5://127.0.0.1:7890" "$all_proxy" "manual SOCKS proxy is enabled"
   assert_equals "1" "$PROXYCLI_ENV_SAVED" "original environment is saved"
@@ -36,7 +42,7 @@ test_runtime() (
     exit 1
   }
 
-  start_proxy --skip-detect >/dev/null
+  start_proxy >/dev/null
   assert_equals "http://127.0.0.1:7890" "$http_proxy" "manual proxy survives restart"
 
   detect_proxy() {
@@ -44,10 +50,14 @@ test_runtime() (
     SOCKS_ADDRESS="socks5://127.0.0.1:9000"
     _PROXYCLI_AUTO_READY=1
   }
-  set_proxy --auto >/dev/null 2>&1
+  set_proxy --address auto >/dev/null 2>&1
   assert_equals "0" "$PROXYCLI_MANUAL_PROXY" "automatic detection is restored"
   assert_equals "http://127.0.0.1:9000" "$http_proxy" "auto mode refreshes the detected HTTP proxy"
   stop_proxy >/dev/null
+
+  set_proxy --address auto >/dev/null
+  assert_equals "0" "$PROXYCLI_MANUAL_PROXY" "inactive auto setting keeps automatic mode"
+  assert_equals "$original_http" "$http_proxy" "inactive auto setting leaves the shell proxy unchanged"
 
   [ -z "${PROXYCLI_SAVED_http_proxy+x}" ] || {
     echo "FAIL: saved proxy values should be cleared after stopping" >&2
@@ -182,10 +192,16 @@ test_detection_order() (
 )
 
 test_scan_port_configuration() (
+  alias pports='set_scan_ports'
   # shellcheck source=/dev/null
   source "$repo_root/src/proxy-setup.sh" >/dev/null
 
-  set_scan_ports 9001 1080 9001 >/dev/null
+  if alias pports >/dev/null 2>&1; then
+    echo "FAIL: the old pports alias should be removed" >&2
+    exit 1
+  fi
+
+  set_proxy --ports 9001 1080 9001 >/dev/null
   assert_equals "9001 1080" "$_PROXYCLI_SCAN_PORTS" "scan ports are updated and deduplicated"
 
   if set_scan_ports 70000 >/dev/null 2>&1; then
@@ -196,7 +212,7 @@ test_scan_port_configuration() (
 
   PROXYCLI_LAST_HTTP_PORT=9001
   _PROXYCLI_AUTO_READY=1
-  set_scan_ports --reset >/dev/null
+  set_proxy --ports --reset >/dev/null
   assert_equals "$_PROXYCLI_DEFAULT_PORTS" "$_PROXYCLI_SCAN_PORTS" "default scan ports are restored"
   [ -z "${PROXYCLI_LAST_HTTP_PORT+x}" ] || {
     echo "FAIL: changing scan ports should clear cached results" >&2
@@ -219,7 +235,8 @@ test_socks_only_detection() (
 
   curl() { return 0; }
   unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY
-  start_proxy --skip-detect >/dev/null
+  PROXYCLI_MANUAL_PROXY=1
+  start_proxy >/dev/null
   [ -z "${http_proxy+x}" ] || {
     echo "FAIL: SOCKS-only mode should not set HTTP proxy variables" >&2
     exit 1
@@ -286,6 +303,140 @@ test_status_uses_full_proxy_url() (
   proxy_status >/dev/null
   assert_equals "$PROXY_ADDRESS" "$checked_http_url" "status checks the configured HTTP proxy URL"
   assert_equals "$SOCKS_ADDRESS" "$checked_socks_url" "status checks the configured SOCKS proxy URL"
+)
+
+test_system_proxy_modes() (
+  local temp_state schema key status_output
+  declare -A settings=()
+
+  temp_state=$(mktemp -d)
+  trap 'rm -rf "$temp_state"' EXIT
+  XDG_STATE_HOME="$temp_state"
+  XDG_CURRENT_DESKTOP=GNOME
+  uname() { printf '%s\n' Linux; }
+  gsettings() {
+    local action="$1" schema="${2:-}" setting="${3:-}"
+    case "$action" in
+      list-schemas) printf '%s\n' org.gnome.system.proxy ;;
+      get) printf '%s\n' "${settings[$schema:$setting]-}" ;;
+      set) settings[$schema:$setting]="$4" ;;
+      *) return 1 ;;
+    esac
+  }
+
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  while read -r schema key; do
+    settings[$schema:$key]="'previous'"
+  done <<EOF
+$(_proxycli_gnome_keys)
+EOF
+  settings[org.gnome.system.proxy:mode]="'auto'"
+  PROXYCLI_MANUAL_PROXY=1
+  PROXY_ADDRESS=http://127.0.0.1:7890
+  SOCKS_ADDRESS=socks5://127.0.0.1:1080
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY
+
+  start_proxy >/dev/null
+  [ -n "${http_proxy:-}" ] || { echo "FAIL: default start should set the shell proxy" >&2; exit 1; }
+  assert_equals "'auto'" "${settings[org.gnome.system.proxy:mode]}" "default start leaves system settings unchanged"
+  set_proxy --system on >/dev/null
+  [ -z "${http_proxy+x}" ] || { echo "FAIL: selecting system mode should restore shell variables" >&2; exit 1; }
+  [ -f "$temp_state/proxycli/system-mode" ] || { echo "FAIL: system mode should persist across shells" >&2; exit 1; }
+
+  start_proxy >/dev/null
+  [ -z "${http_proxy+x}" ] || { echo "FAIL: global start should leave shell variables unchanged" >&2; exit 1; }
+  assert_equals "'manual'" "${settings[org.gnome.system.proxy:mode]}" "global start enables GNOME proxy"
+  assert_equals 7890 "${settings[org.gnome.system.proxy.http:port]}" "global start sets HTTP port"
+  assert_equals 1080 "${settings[org.gnome.system.proxy.socks:port]}" "global start sets SOCKS port"
+  curl() { return 0; }
+  status_output=$(proxy_status)
+  case "$status_output" in
+    *"Current status: ACTIVE (system mode)"*) ;;
+    *) echo "FAIL: status should report the selected system mode" >&2; exit 1 ;;
+  esac
+  start_proxy >/dev/null
+  set_proxy --address 127.0.0.1:9000 >/dev/null
+  assert_equals 9000 "${settings[org.gnome.system.proxy.http:port]}" "pset address applies in system mode"
+  if set_proxy --address user:password@127.0.0.1:7000 >/dev/null 2>&1; then
+    echo "FAIL: invalid system address should be rejected by pset" >&2
+    exit 1
+  fi
+  assert_equals "http://127.0.0.1:9000" "$PROXY_ADDRESS" "invalid system address keeps the previous configured address"
+  stop_proxy >/dev/null
+  assert_equals "'auto'" "${settings[org.gnome.system.proxy:mode]}" "global stop restores prior mode"
+  assert_equals "'previous'" "${settings[org.gnome.system.proxy.http:host]}" "global stop restores prior host"
+  [ ! -e "$temp_state/proxycli/system-proxy" ] || { echo "FAIL: restored system state should be removed" >&2; exit 1; }
+
+  PROXY_ADDRESS=http://user:password@127.0.0.1:7890
+  if start_proxy >/dev/null 2>&1; then
+    echo "FAIL: global start should reject unsupported credentials" >&2
+    exit 1
+  fi
+  [ ! -e "$temp_state/proxycli/system-proxy" ] || { echo "FAIL: invalid global address should not save state" >&2; exit 1; }
+  set_proxy --system off >/dev/null
+  [ ! -e "$temp_state/proxycli/system-mode" ] || { echo "FAIL: system mode should be disabled" >&2; exit 1; }
+  if start_proxy --global >/dev/null 2>&1 || stop_proxy --global >/dev/null 2>&1; then
+    echo "FAIL: scope flags should be rejected after moving mode selection to pset" >&2
+    exit 1
+  fi
+  if set_proxy --global on >/dev/null 2>&1; then
+    echo "FAIL: unsupported pset options should not become proxy addresses" >&2
+    exit 1
+  fi
+)
+
+test_macos_system_proxy() (
+  local temp_state kind
+  declare -A mock_enabled=() mock_server=() mock_port=()
+
+  temp_state=$(mktemp -d)
+  trap 'rm -rf "$temp_state"' EXIT
+  XDG_STATE_HOME="$temp_state"
+  uname() { printf '%s\n' Darwin; }
+  networksetup() {
+    local action="$1" kind
+    case "$action" in
+      -listallnetworkservices) printf '%s\n' 'An asterisk denotes a disabled service.' 'Wi-Fi' '*Disabled' ;;
+      -get*proxy)
+        kind="${action#-get}"
+        kind="${kind%proxy}"
+        printf 'Enabled: %s\nServer: %s\nPort: %s\nAuthenticated Proxy: 0\n' \
+          "${mock_enabled[$kind]}" "${mock_server[$kind]}" "${mock_port[$kind]}"
+        ;;
+      -set*proxystate)
+        kind="${action#-set}"
+        kind="${kind%proxystate}"
+        [ "$2" = 'Wi-Fi' ] || return 1
+        case "$3" in on) mock_enabled[$kind]=Yes ;; off) mock_enabled[$kind]=No ;; *) return 1 ;; esac
+        ;;
+      -set*proxy)
+        kind="${action#-set}"
+        kind="${kind%proxy}"
+        [ "$2" = 'Wi-Fi' ] || return 1
+        mock_server[$kind]="$3"
+        mock_port[$kind]="$4"
+        ;;
+      *) return 1 ;;
+    esac
+  }
+
+  for kind in web secureweb socksfirewall; do
+    mock_enabled[$kind]=No
+    mock_server[$kind]=previous.example
+    mock_port[$kind]=3128
+  done
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  PROXYCLI_MANUAL_PROXY=1
+  PROXY_ADDRESS=http://127.0.0.1:7890
+  SOCKS_ADDRESS=socks5://127.0.0.1:1080
+  set_proxy --system on >/dev/null
+  start_proxy >/dev/null
+  assert_equals Yes "${mock_enabled[web]}" "macOS HTTP proxy is enabled"
+  assert_equals 7890 "${mock_port[secureweb]}" "macOS HTTPS proxy uses the HTTP endpoint"
+  assert_equals 1080 "${mock_port[socksfirewall]}" "macOS SOCKS proxy uses the SOCKS endpoint"
+  set_proxy --system off >/dev/null
+  assert_equals No "${mock_enabled[web]}" "macOS previous enabled state is restored"
+  assert_equals previous.example "${mock_server[web]}" "macOS previous server is restored"
 )
 
 test_installer_configuration() {
@@ -364,6 +515,8 @@ test_socks_only_detection
 test_lsof_process_priority
 test_listener_tool_fallback
 test_status_uses_full_proxy_url
+test_system_proxy_modes
+test_macos_system_proxy
 test_installer_configuration
 
 echo "ProxyCli shell tests passed."

@@ -59,27 +59,33 @@ bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
 
 | Command  | Description| Example |
 |----------------|-------------------|---------------|
-| `pstart`       | Enable proxy<br> | `pstart` |
+| `pstart`       | Enable the proxy in the selected mode<br> | `pstart` |
 | `pscan`        | Force a new proxy scan and enable it<br> | `pscan` |
-| `pstop`        | Disable proxy<br> | `pstop` |
+| `pstop`        | Restore previous proxy settings in the selected mode<br> | `pstop` |
 | `ptoggle`      | Toggle proxy<br> | `ptoggle` |
 | `pstatus`      | Show proxy status<br> | `pstatus` |
-| `pset`         | Set a custom HTTP/SOCKS proxy<br> | `pset username:password@server:port` |
-| `pset --auto`  | Return to automatic detection<br> | `pset --auto` |
-| `pports`       | Show or change scan ports<br> | `pports 7890 1080 8080` |
+| `pset`         | Show the current settings<br> | `pset` |
+| `pset --address host:port` | Set a custom HTTP/SOCKS proxy address<br> | `pset --address localhost:7890` |
+| `pset --address auto` | Return to automatic detection<br> | `pset --address auto` |
+| `pset --system on\|off` | Select system or current-shell mode<br> | `pset --system on` |
+| `pset --ports` | Show or change scan ports<br> | `pset --ports 7890 1080 8080` |
 | `phelp`        | Show help<br> | `phelp` |
 
 ## Proxy Detection
 
 `pstart` is passive: it reports and checks each cached local endpoint, then reuses it when valid. If the cached or default ports are unavailable, it automatically scans again. `pscan` is active: it always performs a fresh scan and enables the result. Scan progress shows the candidate list, current port, pending protocols, and detected results. A scan prioritizes common proxy processes, checks the configured candidate ports, and finally checks other local listeners. Run `pstatus` separately for full connectivity checks.
 
+The default mode changes only the current shell and its child processes. Run `pset --system on` to select desktop system proxy mode; this restores any ProxyCli-managed proxy variables in the current shell. Then `pstart`, `pscan`, `pset --address host:port`, `pstop`, and `ptoggle` act on the system proxy. Run `pset --system off` to restore the previous system settings and return to current-shell mode. The selected mode persists across shells in `${XDG_STATE_HOME:-$HOME/.local/state}/proxycli/system-mode`; the previous system settings are saved in the same directory for restoration. Run `pset` to see the selected mode, current shell's configured address, and scan ports.
+
+System mode supports macOS network services and GNOME desktops on Linux. Other desktops, WSL, and proxy URLs with credentials are not supported in system mode. `pset --address host:port` stores the address for `pstart`; if the selected mode is already active, it updates the active proxy.
+
 The defaults are `7890 7891 7892 7893 7897 8888 8080`. Change them for the current shell when needed:
 
 ```bash
-pports 7890 1080 8080
+pset --ports 7890 1080 8080
 ```
 
-Run `pports` to show the current list or `pports --reset` to restore the defaults. Use `pset host:port` to bypass detection, or `pset --auto` to return to automatic mode.
+Run `pset --ports` to show the current list or `pset --ports --reset` to restore the defaults. Use `pset --address host:port` to bypass detection, or `pset --address auto` to return to automatic mode.
 
 ## Uninstallation 
 
