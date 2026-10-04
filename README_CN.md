@@ -1,161 +1,119 @@
-中文 [English](README.md)
-# 代理管理脚本
+# ProxyCli
 
-适用于 Bash 和 Zsh 的轻量级代理管理脚本，通过命令管理当前 shell 的 HTTP 和 SOCKS5 代理环境变量。
+[English](README.md)
 
-## 功能
+适用于 macOS、Linux 和 WSL 的轻量级 Bash/Zsh HTTP/SOCKS5 代理管理工具。
 
-- 🚀 一键启动、停止或切换当前 shell 的代理变量
-- 🔍 从本地监听端口自动识别 HTTP 和 SOCKS5 代理
-- 📊 查看代理变量并检查连接
-- ⚙️ 通过 `pset` 统一设置代理地址、扫描端口和提示符图标
-
-## 安装方法
-
-### 一行命令安装
+## 安装或更新
 
 ```bash
-bash <(curl -sSL baixiaosheng.de/proxycli) && source "$HOME/.proxycli/src/proxy-setup.sh"
+bash <(curl -fsSL baixiaosheng.de/proxycli) && source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
 
-安装脚本会配置 Bash 的普通终端与 SSH 登录配置文件，或 Zsh 的启动文件。`source` 用于将安装或更新后的命令立即加载到当前 shell；新终端会自动加载。
+需要 `curl`。安装脚本会配置 Bash 启动文件（包含 SSH 登录终端）或 Zsh 启动文件。`source` 将安装后的版本加载到当前 shell，新终端会自动加载。加载命令不会启动代理。
 
-GitHub Raw 备用方式：
+<details>
+<summary>GitHub 备用方式和手动安装</summary>
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/baixiaoshengofficial/ProxyCli/main/install.sh) && source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
 
-### 一行命令卸载
+也可以克隆仓库后安装：
 
 ```bash
-bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
+git clone https://github.com/baixiaoshengofficial/ProxyCli.git
+cd ProxyCli
+bash install.sh
+source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
 
-### 手动安装
+</details>
 
-1. 克隆仓库:
-   ```bash
-   git clone https://github.com/baixiaoshengofficial/ProxyCli.git
-   cd ProxyCli
-   ```
+## 快速使用
 
-2. 运行安装脚本:
-   ```bash
-   bash install.sh
-   ```
+```bash
+pstart   # 启用代理（默认自动识别）
+pstatus  # 检查状态和连接
+pstop    # 恢复原有代理环境
+```
 
-3. 将命令加载到当前 shell:
-   ```bash
-   source "$HOME/.proxycli/src/proxy-setup.sh"
-   ```
-
-## 使用方法
-
-| 命令 | 说明 |
-|------|------|
-| `pstart` | 启用当前 shell 的代理变量 |
-| `pscan` | 扫描本地代理并启用结果 |
-| `pstop` | 恢复当前 shell 原有代理环境 |
-| `ptoggle` | 启动或停止 ProxyCli |
-| `pstatus` | 查看 shell 代理变量并检查连接 |
-| `pset` | 查看当前设置 |
-| `phelp` | 查看帮助 |
-
-### 提示符标记
-
-执行 `pstart` 或成功执行 `pscan` 后，原有提示符前会显示图标，默认为火箭 🚀：
+ProxyCli 启动后，提示符前会显示图标，默认为 🚀；`pstop` 会移除图标：
 
 ```text
 🚀 root@host:~#
 ```
 
-`pstop` 会移除图标，`ptoggle` 会随启停显示或移除。标记表示当前 shell 已启用 ProxyCli 的代理变量，连接是否可用请用 `pstatus` 检查。通过 `pset` 保存设置时，标记保持当前状态，应用设置后再更新。
+| 命令 | 作用 |
+| --- | --- |
+| `pstart` | 启用当前 shell 的代理 |
+| `pscan` | 重新扫描本地代理并启用结果 |
+| `pstop` | 恢复原有代理环境 |
+| `ptoggle` | 启动或停止 ProxyCli |
+| `pstatus` | 查看代理状态并检查连接 |
+| `pset` | 查看全部设置 |
+| `phelp` | 查看帮助 |
 
 ## 设置
 
-`pset` 保存当前 shell 会话的设置，执行 `pstart` 后生效。代理已启动时，应用新设置前会继续使用原有环境。
+`pset` 保存**当前 shell 会话**的设置，执行 `pstart` 后生效。应用之前，正在使用的代理和图标保持原样。
 
-### 代理地址
+| 设置 | 设置值 | 恢复默认 |
+| --- | --- | --- |
+| 代理地址 | `pset --address 127.0.0.1:7890` | `pset --address auto` |
+| 扫描端口 | `pset --ports 7890 1080` | `pset --ports auto` |
+| 提示符图标 | `pset --indicator 🌐` | `pset --indicator auto` |
 
-```bash
-pset --address 127.0.0.1:7890  # 设置代理地址
-pset --address auto            # 使用自动识别
-```
+省略值可查看对应设置：`pset --address`、`pset --ports`、`pset --indicator`。
 
-执行 `pset --address` 查看地址设置。
-
-按需替换主机和端口。一个地址同时用于 HTTP 和 SOCKS5。如果两者地址不同，先写 HTTP，再写 SOCKS5：
+一个地址同时用于 HTTP 和 SOCKS5。两者地址不同时，先写 HTTP，再写 SOCKS5：
 
 ```bash
 pset --address 127.0.0.1:7890 127.0.0.1:1080
+pstart
 ```
 
-地址必须包含主机和端口，端口范围为 `1–65535`。IPv6 主机需要方括号，例如 `'[::1]:7890'`。HTTP 地址可带 `http://` 或 `https://`；单独指定的 SOCKS 地址可带 `socks5://` 或 `socks5h://`。命令输出会隐藏代理认证信息。
+- 地址格式为 `host:port`，端口范围为 `1–65535`。IPv6 地址需要引号和方括号：`'[::1]:7890'`。HTTP 可带 `http://` 或 `https://`；单独指定的 SOCKS 地址可带 `socks5://` 或 `socks5h://`。输出会隐藏代理认证信息。
+- 默认扫描端口：`7890 7891 7892 7893 7897 8888 8080`。
+- 图标支持不含空格或提示符转义的 emoji 或符号，包括 `👩‍💻` 等组合 emoji。emoji 无需加引号，默认图标为 🚀。仅修改图标不会强制重新扫描代理。
 
-### 扫描端口
+同一会话内重新加载脚本会保留设置；设置不会跨终端或 shell 重启保存。
+
+## 工作方式
+
+### 启动与扫描
+
+`pstart` 直接使用手动地址。自动模式下，待应用的地址或扫描端口设置会触发扫描；否则，优先复用端口仍在监听的已识别代理，或已有代理环境变量，必要时再扫描。
+
+`pscan` 每次都会扫描并启用结果，然后将地址设置切换为自动识别。扫描顺序为缓存端口、代理进程端口、配置端口、其他本地监听端口。扫描失败时保留正在使用的环境，待应用设置可再次尝试。
+
+### 状态与连接
+
+图标和 `ACTIVE` / `INACTIVE` 表示 ProxyCli 是否正在管理当前 shell。`pstatus` 检查实际代理变量，包括外部设置的代理，并分别报告直连、HTTP 和 SOCKS5 的连接结果。测试地址默认为 `https://example.com/`，可通过 `PROXYCLI_TEST_URL` 更改。有待应用设置时会提示执行 `pstart`。
+
+### 生效范围
+
+`pstart` 和 `pscan` 导出 `http_proxy`、`https_proxy`、`all_proxy` 及其大写变量。从当前 shell 启动的程序会继承这些变量，支持它们的程序可据此使用代理。其他终端、已运行的程序和独立启动的服务保留各自的环境。`pstop` 恢复 ProxyCli 启动前的代理与 `no_proxy` 变量。
+
+## 卸载
 
 ```bash
-pset --ports 7890 1080  # 设置扫描端口
-pset --ports auto      # 恢复默认端口
+bash <(curl -fsSL baixiaosheng.de/proxycli) --uninstall
 ```
 
-执行 `pset --ports` 查看扫描端口，执行 `pset` 查看全部设置。默认端口为 `7890 7891 7892 7893 7897 8888 8080`。
+在本地仓库中也可执行 `bash install.sh uninstall`。卸载后重启 shell，移除已加载的命令。
 
-### 提示符图标
+## 开发
+
+运行逻辑位于 `src/proxy-setup.sh`，安装和 shell 启动配置位于 `install.sh`。修改后执行：
 
 ```bash
-pset --indicator '🌐'  # 设置提示符图标
-pset --indicator auto  # 恢复默认火箭 🚀
-pstart                 # 应用设置
+bash -n install.sh
+bash -n src/proxy-setup.sh
+bash tests/test_proxy_setup.sh
+bash install.sh --help
 ```
 
-执行 `pset --indicator` 查看图标设置。使用一个不含空格或提示符转义的 emoji 或符号，支持 `'👩‍💻'` 等组合 emoji。与其他设置一样，仅在当前 shell 会话中保留。
+测试无需联网。欢迎提交改进，请保持两份文档与命令行为一致。
 
-## 代理识别
-
-`pstart` 优先应用待生效的地址或扫描端口设置：手动地址直接启用，自动模式重新扫描。否则，会复用仍在监听的本地代理缓存或已有的代理环境变量，必要时扫描。仅修改图标不会强制重新扫描。`pscan` 每次都会重新扫描本地代理并启用结果；扫描成功后，地址设置切换为自动识别。
-
-扫描顺序为缓存端口、常见代理进程端口、配置的候选端口、其他本地监听端口。进度会显示候选列表、当前端口、协议和结果。扫描失败时保留原有地址和 shell 环境。
-
-`pstart` 成功表示代理变量已设置。执行 `pstatus` 可检查到 `PROXYCLI_TEST_URL` 的连接（默认 `https://example.com/`）。它检测当前 shell 的实际变量，也会显示外部设置的代理。`ACTIVE` / `INACTIVE` 表示 ProxyCli 是否正在管理当前 shell，连接是否可用会单独显示。
-
-`pstart` 和 `pscan` 会在当前 shell 中导出 `http_proxy`、`https_proxy`、`all_proxy` 及其大写变量。从该 shell 启动的程序会继承这些变量，支持代理环境变量的程序可据此使用代理。`pstop` 恢复当前 shell 原有的环境。其他终端、已经运行的程序和独立启动的服务保留各自的环境。
-
-加载运行脚本只会提供命令，不会自动启用代理。同一 shell 会话内重新加载脚本，会保留设置和待应用的更改。`pstatus` 显示正在使用的环境，并提示是否有待应用设置。应用失败时保留当前环境，新设置保持待应用状态，可再次尝试。执行 `pset` 查看已配置的设置。
-
-## 卸载方法
-
-```bash
-bash install.sh uninstall
-```
-
-## 支持环境
-
-- ✔️ macOS (Terminal, iTerm2)
-- ✔️ Linux (Ubuntu, Debian, CentOS 等)
-- ✔️ Windows Subsystem for Linux (WSL)
-
-## 项目结构
-
-```
-ProxyCli/
-├── LICENSE                 # MIT 许可证
-├── README.md               # 英文文档
-├── README_CN.md            # 中文文档
-├── install.sh               # 安装脚本
-├── src/
-│   └── proxy-setup.sh      # 核心代理管理脚本
-└── tests/
-    └── test_proxy_setup.sh # 离线 shell 回归测试
-```
-
-## 贡献
-
-欢迎提交 issue 或 pull request 来改进本项目。
-
-[在 GitHub 上查看](https://github.com/baixiaoshengofficial/ProxyCli)
-
-## 许可证
-
-本项目基于 MIT 许可证。查看 [LICENSE](LICENSE) 文件了解更多信息。
+[MIT 许可证](LICENSE) · [GitHub](https://github.com/baixiaoshengofficial/ProxyCli)

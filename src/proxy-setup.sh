@@ -131,21 +131,9 @@ _proxycli_probe_url() {
     --noproxy "" --proxy "$1" "$PROXYCLI_TEST_URL" >/dev/null 2>&1
 }
 
-_proxycli_probe_http_url() {
-  _proxycli_probe_url "$1"
-}
-
-_proxycli_probe_socks_url() {
-  _proxycli_probe_url "$1"
-}
-
-_proxycli_clear_detection_cache() {
+_proxycli_mark_settings_changed() {
   _PROXYCLI_AUTO_READY=0
   unset PROXYCLI_LAST_HTTP_PORT PROXYCLI_LAST_SOCKS_PORT
-}
-
-_proxycli_mark_settings_changed() {
-  _proxycli_clear_detection_cache
   _PROXYCLI_SETTINGS_PENDING=1
 }
 
@@ -259,11 +247,11 @@ detect_proxy() {
     [ -z "$http_port" ] && pending="HTTP"
     [ -z "$socks_port" ] && pending="${pending:+$pending, }SOCKS5"
     echo "[ProxyCli] Scanning 127.0.0.1:${port} for ${pending}." >&2
-    if [ -z "$http_port" ] && _proxycli_probe_http_url "http://127.0.0.1:$port"; then
+    if [ -z "$http_port" ] && _proxycli_probe_url "http://127.0.0.1:$port"; then
       http_port="$port"
       echo "[ProxyCli] Found HTTP proxy on port ${port}." >&2
     fi
-    if [ -z "$socks_port" ] && _proxycli_probe_socks_url "socks5h://127.0.0.1:$port"; then
+    if [ -z "$socks_port" ] && _proxycli_probe_url "socks5h://127.0.0.1:$port"; then
       socks_port="$port"
       echo "[ProxyCli] Found SOCKS5 proxy on port ${port}." >&2
     fi
@@ -413,11 +401,13 @@ start_proxy() {
   if [ "$PROXYCLI_MANUAL_PROXY" != "1" ]; then
     if [ "$_PROXYCLI_SETTINGS_PENDING" = "1" ]; then
       detect_proxy || return 1
-    elif [ "$_PROXYCLI_AUTO_READY" = "1" ] && _proxycli_cached_proxy_available; then
-      echo "[ProxyCli] Reusing the last detected proxy." >&2
     elif [ "$_PROXYCLI_AUTO_READY" = "1" ]; then
-      echo "[ProxyCli] Cached proxy unavailable; rescanning." >&2
-      detect_proxy || return 1
+      if _proxycli_cached_proxy_available; then
+        echo "[ProxyCli] Reusing the last detected proxy." >&2
+      else
+        echo "[ProxyCli] Cached proxy unavailable; rescanning." >&2
+        detect_proxy || return 1
+      fi
     elif _proxycli_use_existing_proxy; then
       echo "[ProxyCli] Reusing existing proxy environment." >&2
     elif ! detect_proxy; then
@@ -432,9 +422,7 @@ start_proxy() {
 scan_proxy() {
   _proxycli_no_arguments pscan "$@" || return 1
   echo "[ProxyCli] Scanning local HTTP and SOCKS5 proxies." >&2
-  if ! detect_proxy; then
-    return 1
-  fi
+  detect_proxy || return 1
 
   PROXYCLI_MANUAL_PROXY=0
   _proxycli_activate_proxy
@@ -442,7 +430,7 @@ scan_proxy() {
 
 stop_proxy() {
   _proxycli_no_arguments pstop "$@" || return 1
-  if [ "${PROXYCLI_ENV_SAVED:-0}" != "1" ]; then
+  if ! _proxycli_proxy_active; then
     echo "[ProxyCli] Inactive; environment unchanged."
     return 0
   fi
@@ -490,7 +478,7 @@ proxy_status() {
   fi
 
   if [ -n "$current_http" ]; then
-    if _proxycli_probe_http_url "$current_http"; then
+    if _proxycli_probe_url "$current_http"; then
       echo "  HTTP proxy: working"
     else
       echo "  HTTP proxy: unavailable"
@@ -498,7 +486,7 @@ proxy_status() {
   fi
 
   if [ -n "$current_socks" ]; then
-    if _proxycli_probe_socks_url "$current_socks"; then
+    if _proxycli_probe_url "$current_socks"; then
       echo "  SOCKS5 proxy: working"
     else
       echo "  SOCKS5 proxy: unavailable"
@@ -561,7 +549,7 @@ _proxycli_normalize_address() {
 }
 
 set_proxy() {
-  local http_input socks_input new_http new_socks
+  local option
 
   if [ "$#" -eq 0 ]; then
     echo "[ProxyCli] Current settings:"
@@ -571,23 +559,21 @@ set_proxy() {
     return 0
   fi
 
-  case "${1:-}" in
-    --indicator)
-      shift
-      _proxycli_set_indicator "$@"
-      return
-      ;;
-    --ports)
-      shift
-      set_scan_ports "$@"
-      return
-      ;;
-    --address) shift ;;
+  option="$1"
+  shift
+  case "$option" in
+    --address) _proxycli_set_address "$@" ;;
+    --ports) _proxycli_set_scan_ports "$@" ;;
+    --indicator) _proxycli_set_indicator "$@" ;;
     *)
-      echo "Usage: pset --address [host:port|auto] | --ports [port ...|auto] | --indicator [emoji|auto]" >&2
+      printf '[ProxyCli] Unknown setting: %s. Run phelp for usage.\n' "$option" >&2
       return 1
       ;;
   esac
+}
+
+_proxycli_set_address() {
+  local http_input socks_input new_http new_socks
 
   if [ "$#" -eq 0 ]; then
     _proxycli_show_address_setting
@@ -608,7 +594,7 @@ set_proxy() {
 
   http_input="${1:-}"
   socks_input="${2-$http_input}"
-  if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+  if [ "$#" -gt 2 ]; then
     echo "Usage: pset --address [http://]host:port [socks5://host:port]" >&2
     echo "       pset --address auto" >&2
     return 1
@@ -626,9 +612,8 @@ set_proxy() {
 
   PROXYCLI_MANUAL_PROXY=1
   _proxycli_mark_settings_changed
-  echo "[ProxyCli] Proxy address saved (current session)."
+  echo "[ProxyCli] Address saved. Run pstart to apply."
   _proxycli_show_address_setting
-  echo "[ProxyCli] Run pstart to apply."
 }
 
 _proxycli_set_indicator() {
@@ -654,36 +639,31 @@ _proxycli_set_indicator() {
   printf '[ProxyCli] Indicator saved: %s. Run pstart to apply.\n' "$_PROXYCLI_INDICATOR"
 }
 
-set_scan_ports() {
+_proxycli_set_scan_ports() {
   local input port ports=""
 
   if [ "$#" -eq 0 ]; then
     echo "[ProxyCli] Scan ports: $_PROXYCLI_SCAN_PORTS"
     return 0
   fi
-  case "$1" in
-    auto)
-      if [ "$#" -ne 1 ]; then
-        echo "Usage: pset --ports port ...|auto" >&2
-        return 1
-      fi
-      _PROXYCLI_SCAN_PORTS="$_PROXYCLI_DEFAULT_PORTS"
-      _proxycli_mark_settings_changed
-      echo "[ProxyCli] Default scan ports: $_PROXYCLI_SCAN_PORTS. Run pstart to apply."
-      return 0
-      ;;
-  esac
-
-  for input in "$@"; do
-    if ! port=$(_proxycli_normalize_port "$input"); then
-      printf '[ProxyCli] Invalid port: %s. Use an integer from 1 to 65535.\n' "$input" >&2
+  if [ "$1" = auto ]; then
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: pset --ports [port ...|auto]" >&2
       return 1
     fi
-    case " $ports " in
-      *" $port "*) ;;
-      *) ports="${ports:+$ports }$port" ;;
-    esac
-  done
+    ports="$_PROXYCLI_DEFAULT_PORTS"
+  else
+    for input in "$@"; do
+      if ! port=$(_proxycli_normalize_port "$input"); then
+        printf '[ProxyCli] Invalid port: %s. Use an integer from 1 to 65535.\n' "$input" >&2
+        return 1
+      fi
+      case " $ports " in
+        *" $port "*) ;;
+        *) ports="${ports:+$ports }$port" ;;
+      esac
+    done
+  fi
 
   _PROXYCLI_SCAN_PORTS="$ports"
   _proxycli_mark_settings_changed
@@ -694,36 +674,28 @@ show_help() {
   _proxycli_no_arguments phelp "$@" || return 1
   cat <<'EOF'
 ProxyCli commands:
-  pstart                 Enable the proxy in the current shell
-  pscan                  Force proxy detection and enable the result
-  pstop                  Restore the previous proxy environment in this shell
-  ptoggle                Toggle ProxyCli proxy settings
-  pstatus                Show shell proxy variables and test connectivity
-  pset                   Show the current settings
+  pstart                 Enable this shell's proxy
+  pscan                  Rescan local proxies and enable the result
+  pstop                  Restore the previous proxy environment
+  ptoggle                Start or stop ProxyCli
+  pstatus                Show proxy state and check connectivity
+  pset                   Show all settings
   phelp                  Show this help
 
-Proxy address (examples):
-  pset --address 127.0.0.1:7890    Set HTTP and SOCKS5 address
-  pset --address auto              Use automatic detection
-  pset --address                   Show address setting
-  For separate addresses (HTTP first, SOCKS5 second):
-    pset --address 127.0.0.1:7890 127.0.0.1:1080
-
-Scan ports (examples):
+Settings (current session; run pstart to apply):
+  pset --address host:port         Set HTTP and SOCKS5 address
   pset --ports 7890 1080           Set scan ports
-  pset --ports auto                Restore default ports
-  pset --ports                     Show scan ports
+  pset --indicator 🌐             Set prompt icon (default: 🚀)
 
-Prompt indicator:
-  pset --indicator '🌐'            Set icon
-  pset --indicator auto            Restore default 🚀
-  pset --indicator                 Show icon setting
+Restore defaults:
+  pset --address auto              Use automatic detection
+  pset --ports auto                Restore default scan ports
+  pset --indicator auto            Restore 🚀
 
+View one setting: pset --address, pset --ports, or pset --indicator
+For separate addresses: pset --address http_host:port socks_host:port
 Proxy variables apply to this shell and programs started from it.
-Settings apply to the current shell session.
-pset saves settings; pstart applies them. pscan rescans and applies.
-Use pstatus to check connectivity.
-The prompt icon marks an active ProxyCli shell proxy (default: 🚀).
+The prompt icon indicates ProxyCli is active; pstatus checks connectivity.
 EOF
 }
 

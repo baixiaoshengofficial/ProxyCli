@@ -1,167 +1,119 @@
-English [中文](https://github.com/baixiaoshengofficial/ProxyCli/blob/main/README_CN.md)
-# Proxy Management Script
+# ProxyCli
 
-A lightweight proxy manager for Bash and Zsh. Manage HTTP and SOCKS5 proxy environment variables in the current shell.
+[中文](README_CN.md)
 
-## Features
+A lightweight HTTP/SOCKS5 proxy manager for Bash and Zsh on macOS, Linux, and WSL.
 
-- 🚀 Start, stop, or toggle proxy variables in the current shell
-- 🔍 Auto-detect HTTP and SOCKS5 proxies from local listeners
-- 📊 Show proxy variables and check connectivity
-- ⚙️ Configure proxy addresses, scan ports, and the prompt icon with `pset`
-
-## Installation 
-
-### One-line Install 
+## Install or update
 
 ```bash
-bash <(curl -sSL baixiaosheng.de/proxycli) && source "$HOME/.proxycli/src/proxy-setup.sh"
+bash <(curl -fsSL baixiaosheng.de/proxycli) && source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
 
-The installer updates Bash startup files for both regular and SSH login shells, or the Zsh startup file. The `source` step loads the installed or updated commands into the current shell; new terminals load them automatically.
+Requires `curl`. The installer configures Bash startup files (including SSH login shells) or Zsh's startup file. `source` loads the installed version into the current shell; new terminals load it automatically. Loading commands does not start the proxy.
 
-GitHub Raw fallback:
+<details>
+<summary>GitHub fallback and manual installation</summary>
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/baixiaoshengofficial/ProxyCli/main/install.sh) && source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
 
-### One-line Uninstall 
+Or clone and install:
 
 ```bash
-bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
+git clone https://github.com/baixiaoshengofficial/ProxyCli.git
+cd ProxyCli
+bash install.sh
+source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
 
-### Manual Install 
+</details>
 
-1. Clone repository:  
+## Quick start
 
-   ```bash
-   git clone https://github.com/baixiaoshengofficial/ProxyCli.git
-   cd ProxyCli
-   ```
+```bash
+pstart   # Enable the proxy (automatic detection by default)
+pstatus  # Check state and connectivity
+pstop    # Restore the previous proxy environment
+```
 
-2. Run installer:  
-
-   ```bash
-   bash install.sh
-   ```
-
-3. Load the commands in the current shell:
-
-   ```bash
-   source "$HOME/.proxycli/src/proxy-setup.sh"
-   ```
-
-## Usage
-
-| Command | Description |
-|---------|-------------|
-| `pstart` | Enable proxy variables in this shell |
-| `pscan` | Scan local proxies and enable the result |
-| `pstop` | Restore this shell's previous proxy environment |
-| `ptoggle` | Start or stop ProxyCli |
-| `pstatus` | Show shell proxy variables and test connectivity |
-| `pset` | Show current settings |
-| `phelp` | Show help |
-
-### Prompt indicator
-
-After `pstart` or a successful `pscan`, an icon appears before the existing prompt (default: 🚀):
+While ProxyCli is active, the prompt shows an icon (default: 🚀). `pstop` removes it:
 
 ```text
 🚀 root@host:~#
 ```
 
-`pstop` removes the icon. `ptoggle` shows or removes it as the proxy starts or stops. The icon means ProxyCli's proxy variables are active in this shell; run `pstatus` to check connectivity. Saving settings with `pset` keeps the current indicator until you apply them.
+| Command | Action |
+| --- | --- |
+| `pstart` | Enable this shell's proxy |
+| `pscan` | Rescan local proxies and enable the result |
+| `pstop` | Restore the previous proxy environment |
+| `ptoggle` | Start or stop ProxyCli |
+| `pstatus` | Show proxy state and check connectivity |
+| `pset` | Show all settings |
+| `phelp` | Show help |
 
 ## Settings
 
-`pset` saves settings for the current shell session. Run `pstart` to apply them. An active proxy keeps its current environment until you apply the new settings.
+`pset` saves settings for the **current shell session**. Run `pstart` to apply them; until then, the active proxy and icon stay as they are.
 
-### Proxy address
+| Setting | Set a value | Restore the default |
+| --- | --- | --- |
+| Address | `pset --address 127.0.0.1:7890` | `pset --address auto` |
+| Scan ports | `pset --ports 7890 1080` | `pset --ports auto` |
+| Prompt icon | `pset --indicator 🌐` | `pset --indicator auto` |
 
-```bash
-pset --address 127.0.0.1:7890  # Set proxy address
-pset --address auto            # Use automatic detection
-```
+Omit the value to view one setting: `pset --address`, `pset --ports`, or `pset --indicator`.
 
-Run `pset --address` to show the address setting.
-
-Replace the host and port as needed. One address is used for both HTTP and SOCKS5. If they use separate addresses, put HTTP first and SOCKS5 second:
+One address is used for both HTTP and SOCKS5. For separate endpoints, put HTTP first and SOCKS5 second:
 
 ```bash
 pset --address 127.0.0.1:7890 127.0.0.1:1080
+pstart
 ```
 
-Addresses require a host and a port from `1` to `65535`. Use brackets around IPv6 hosts, for example `'[::1]:7890'`. HTTP addresses accept `http://` or `https://`; a separate SOCKS address accepts `socks5://` or `socks5h://`. Proxy credentials are hidden in command output.
+- Addresses require `host:port`, with ports from `1` to `65535`. Quote IPv6 addresses: `'[::1]:7890'`. HTTP accepts `http://` or `https://`; a separate SOCKS endpoint accepts `socks5://` or `socks5h://`. Output hides proxy credentials.
+- Default scan ports: `7890 7891 7892 7893 7897 8888 8080`.
+- Icons accept a literal emoji or symbol without spaces or prompt escapes, including combined emoji such as `👩‍💻`. Quotes are optional for emoji. The default is 🚀; changing only the icon does not force a new proxy scan.
 
-### Scan ports
+Settings survive reloading the runtime in the same session. They are not saved across terminals or shell restarts.
+
+## How it works
+
+### Start and scan
+
+`pstart` uses a manual address directly. In automatic mode, pending address or scan-port changes trigger a scan; otherwise, it reuses a detected proxy whose ports are still listening, or existing proxy environment variables, before scanning.
+
+`pscan` always scans and enables the result, then switches the address setting to automatic detection. Scans try cached ports, proxy process ports, configured ports, and other local listeners, in that order. A failed scan keeps the active environment and leaves pending settings available for retry.
+
+### State and connectivity
+
+The icon and `ACTIVE` / `INACTIVE` indicate whether ProxyCli is managing this shell. `pstatus` checks the actual proxy variables, including externally configured ones, and reports direct, HTTP, and SOCKS5 connectivity separately. The test URL defaults to `https://example.com/`; set `PROXYCLI_TEST_URL` to change it. Pending settings appear as a reminder to run `pstart`.
+
+### Scope
+
+`pstart` and `pscan` export `http_proxy`, `https_proxy`, `all_proxy`, and their uppercase variants. Programs started from this shell inherit them and use the proxy if they support these variables. Other terminals, already running programs, and independently started services keep their own environment. `pstop` restores the proxy and `no_proxy` variables that existed before ProxyCli started.
+
+## Uninstall
 
 ```bash
-pset --ports 7890 1080  # Set scan ports
-pset --ports auto      # Restore default ports
+bash <(curl -fsSL baixiaosheng.de/proxycli) --uninstall
 ```
 
-Run `pset --ports` to show scan ports, or `pset` to show all settings. The defaults are `7890 7891 7892 7893 7897 8888 8080`.
+From a local checkout, run `bash install.sh uninstall`. Restart the shell afterward to remove the loaded commands.
 
-### Prompt icon
+## Development
+
+Runtime code lives in `src/proxy-setup.sh`; installation and shell startup integration live in `install.sh`. Validate changes with:
 
 ```bash
-pset --indicator '🌐'  # Set the prompt icon
-pset --indicator auto  # Restore the default 🚀
-pstart                 # Apply the setting
+bash -n install.sh
+bash -n src/proxy-setup.sh
+bash tests/test_proxy_setup.sh
+bash install.sh --help
 ```
 
-Run `pset --indicator` to show the icon setting. Use one emoji or symbol without spaces or prompt escapes; combined emoji such as `'👩‍💻'` are supported. Like other settings, it lasts for the current shell session.
+Tests run offline. Contributions are welcome; keep both guides aligned with command behavior.
 
-## Proxy Detection
-
-`pstart` applies pending address or scan-port settings first: a manual address is used directly; automatic mode runs a new scan. Otherwise, it reuses a cached local proxy whose ports are still listening or existing proxy environment variables, and scans when needed. Changing only the icon does not force a new scan. `pscan` always performs a fresh local scan and enables the result; a successful scan switches the address setting to automatic detection.
-
-Scans try cached ports first, followed by common proxy process ports, configured ports, and other local listeners. Progress shows the candidates, current port, protocols, and results. A failed scan keeps the previous address and shell environment.
-
-`pstart` confirms that proxy variables were set. Run `pstatus` to test connectivity to `PROXYCLI_TEST_URL` (default: `https://example.com/`). It checks the actual shell variables, including externally configured proxies. `ACTIVE` / `INACTIVE` describes whether ProxyCli is managing the shell; the connection results are reported separately.
-
-`pstart` and `pscan` export `http_proxy`, `https_proxy`, `all_proxy`, and their uppercase variants in the current shell. Programs launched from that shell inherit these variables and can use them if they support proxy environment variables. `pstop` restores the previous shell environment. Other terminals, already running programs, and independently launched services keep their own environment.
-
-Sourcing the runtime loads the commands; it does not automatically enable a proxy. Settings and pending changes survive reloading the runtime in the same shell session. `pstatus` shows the active environment and a reminder when settings are pending. A failed application keeps the active environment and leaves the new settings pending for another attempt. Run `pset` to view the configured settings.
-
-## Uninstallation 
-
-```bash
-bash install.sh uninstall
-```
-
-## Supported Environments
-
-- ✔️ macOS (Terminal, iTerm2)
-- ✔️ Linux (Ubuntu, Debian, CentOS, etc.)
-- ✔️ Windows Subsystem for Linux (WSL)
-
-## Project Structure
-
-```
-ProxyCli/
-├── LICENSE                 # MIT License
-├── README.md               # English documentation
-├── README_CN.md            # Chinese documentation (中文文档)
-├── install.sh              # Installation script
-├── src/
-│   └── proxy-setup.sh      # Core proxy management
-└── tests/
-    └── test_proxy_setup.sh # Offline shell regression tests
-```
-
-## Contributing 
-
-Contributions are welcome! Please open an issue or submit a pull request.  
-
-
-[View on GitHub](https://github.com/baixiaoshengofficial/ProxyCli)
-
-## License 
-
-This project is licensed under the MIT License.  
-
-See [LICENSE](LICENSE) for more information.  
+[MIT License](LICENSE) · [GitHub](https://github.com/baixiaoshengofficial/ProxyCli)

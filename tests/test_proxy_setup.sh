@@ -149,8 +149,9 @@ test_scan_progress() (
   # shellcheck source=/dev/null
   source "$repo_root/src/proxy-setup.sh" >/dev/null
   _proxycli_candidate_ports() { printf '%s\n' 7890; }
-  _proxycli_probe_http_url() { return 0; }
-  _proxycli_probe_socks_url() { return 1; }
+  _proxycli_probe_url() {
+    case "$1" in http://*) return 0 ;; *) return 1 ;; esac
+  }
 
   output=$(detect_proxy 2>&1)
   case "$output" in
@@ -177,11 +178,8 @@ test_detection_order() (
     "$(_proxycli_candidate_ports)" \
     "proxy process ports are checked before configured and other ports"
 
-  _proxycli_probe_http_url() {
-    [ "$1" = "http://127.0.0.1:7001" ]
-  }
-  _proxycli_probe_socks_url() {
-    [ "$1" = "socks5h://127.0.0.1:9002" ]
+  _proxycli_probe_url() {
+    [ "$1" = "http://127.0.0.1:7001" ] || [ "$1" = "socks5h://127.0.0.1:9002" ]
   }
 
   detect_proxy >/dev/null 2>&1
@@ -208,7 +206,7 @@ test_scan_port_configuration() (
   set_proxy --ports 9001 1080 9001 >/dev/null
   assert_equals "9001 1080" "$_PROXYCLI_SCAN_PORTS" "scan ports are updated and deduplicated"
 
-  if set_scan_ports 70000 >/dev/null 2>&1; then
+  if set_proxy --ports 70000 >/dev/null 2>&1; then
     echo "FAIL: out-of-range scan port should be rejected" >&2
     exit 1
   fi
@@ -246,8 +244,12 @@ test_socks_only_detection() (
   source "$repo_root/src/proxy-setup.sh" >/dev/null
 
   _proxycli_candidate_ports() { printf '%s\n' 1080; }
-  _proxycli_probe_http_url() { return 1; }
-  _proxycli_probe_socks_url() { tested_socks_url=$1; return 0; }
+  _proxycli_probe_url() {
+    case "$1" in
+      socks5h://*) tested_socks_url=$1; return 0 ;;
+      *) return 1 ;;
+    esac
+  }
 
   detect_proxy >/dev/null 2>&1
   assert_equals "" "$PROXY_ADDRESS" "SOCKS-only detection leaves HTTP unset"
@@ -315,12 +317,12 @@ test_status_uses_full_proxy_url() (
   all_proxy="socks5h://actual.example:1081"
 
   curl() { return 0; }
-  _proxycli_probe_http_url() {
-    checked_http_url=$1
-    return 0
-  }
-  _proxycli_probe_socks_url() {
-    checked_socks_url=$1
+  _proxycli_probe_url() {
+    case "$1" in
+      http://*) checked_http_url=$1 ;;
+      socks5h://*) checked_socks_url=$1 ;;
+      *) return 1 ;;
+    esac
     return 0
   }
 
@@ -337,12 +339,13 @@ test_http_only_and_failed_scan() (
   source "$repo_root/src/proxy-setup.sh" >/dev/null
   curl() { return 0; }
   _proxycli_candidate_ports() { printf '%s\n' 7890; }
-  _proxycli_probe_http_url() { return 0; }
-  _proxycli_probe_socks_url() { return 1; }
+  _proxycli_probe_url() {
+    case "$1" in http://*) return 0 ;; *) return 1 ;; esac
+  }
   scan_proxy >/dev/null 2>&1
   assert_equals 'http://127.0.0.1:7890' "$http_proxy" "HTTP-only activation succeeds"
   [ -z "${all_proxy+x}" ] || { echo 'FAIL: HTTP-only activation must unset SOCKS variables' >&2; exit 1; }
-  _proxycli_probe_http_url() { return 1; }
+  _proxycli_probe_url() { return 1; }
   if scan_proxy >/dev/null 2>&1; then
     echo 'FAIL: unavailable ports must fail detection' >&2
     exit 1
@@ -351,7 +354,9 @@ test_http_only_and_failed_scan() (
   assert_equals 'http://127.0.0.1:7890' "$PROXY_ADDRESS" "failed scan preserves the selected address"
   assert_equals '1' "$_PROXYCLI_AUTO_READY" "failed scan preserves the previous detection state"
   stop_proxy >/dev/null
-  _proxycli_probe_socks_url() { return 0; }
+  _proxycli_probe_url() {
+    case "$1" in socks5h://*) return 0 ;; *) return 1 ;; esac
+  }
   detect_proxy >/dev/null 2>&1
   [ -z "${PROXYCLI_LAST_HTTP_PORT+x}" ] || { echo 'FAIL: SOCKS-only scan must clear the old HTTP port' >&2; exit 1; }
 )
@@ -379,6 +384,13 @@ test_validation_and_reload() (
   set_proxy --ports 07890 7890 01080 >/dev/null
   assert_equals '7890 1080' "$_PROXYCLI_SCAN_PORTS" "leading zero ports are normalized and deduplicated"
   settings_before=$(set_proxy)
+  for invalid in '' --unknown --addressx; do
+    if set_proxy "$invalid" >/dev/null 2>&1; then
+      printf 'FAIL: unknown setting accepted: %s\n' "$invalid" >&2
+      exit 1
+    fi
+    assert_equals "$settings_before" "$(set_proxy)" "unknown settings preserve configuration"
+  done
   for invalid in '' --bad host host:0 host:65536 host:abc host:7890/path \
     'http://host:7890?x=1' 'socks5://host:7890' 'ftp://host:7890' '::1:7890' 'http://:7890' 'http://host name:7890'; do
     if set_proxy --address "$invalid" >/dev/null 2>&1; then
@@ -548,6 +560,14 @@ test_shell_scope_and_help() (
   esac
   case "$help_output" in
     *--reset*) echo "FAIL: help should omit the old reset syntax" >&2; exit 1 ;;
+  esac
+  case "$help_output" in
+    *'pset --indicator 🌐'*'pset --indicator auto'*) ;;
+    *) echo 'FAIL: help should show unquoted emoji and the indicator default command' >&2; exit 1 ;;
+  esac
+  case "$help_output" in
+    *'pset --address, pset --ports, or pset --indicator'*) ;;
+    *) echo 'FAIL: help should list all setting query commands' >&2; exit 1 ;;
   esac
 
   status_output=$(proxy_status)
@@ -857,7 +877,7 @@ assert_equals '1' "$theme_updates" "existing theme hook still runs"
 assert_equals '🚀 new theme> ' "$PS1" "theme updates keep the rocket prefix"
 run_prompt_hooks
 assert_equals '🚀 new theme> ' "$PS1" "prompt refresh does not duplicate the icon"
-set_proxy --indicator '🌐' >/dev/null
+set_proxy --indicator 🌐 >/dev/null
 assert_equals '🚀 new theme> ' "$PS1" "setting an indicator keeps the old icon until application"
 run_prompt_hooks
 assert_equals '🚀 new theme> ' "$PS1" "theme refresh preserves the applied icon while a new one is pending"
