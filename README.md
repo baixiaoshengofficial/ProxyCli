@@ -8,7 +8,7 @@ A lightweight proxy manager for Bash and Zsh. Manage HTTP and SOCKS5 proxy envir
 - 🚀 Start, stop, or toggle proxy variables in the current shell
 - 🔍 Auto-detect HTTP and SOCKS5 proxies from local listeners
 - 📊 Show proxy variables and check connectivity
-- ⚙️ Configure proxy addresses and scan ports with `pset`
+- ⚙️ Configure proxy addresses, scan ports, and the prompt icon with `pset`
 
 ## Installation 
 
@@ -67,13 +67,13 @@ bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
 
 ### Prompt indicator
 
-After `pstart` or a successful `pscan`, a rocket appears before the existing prompt:
+After `pstart` or a successful `pscan`, an icon appears before the existing prompt (default: 🚀):
 
 ```text
 🚀 root@host:~#
 ```
 
-`pstop` removes the rocket. `ptoggle` shows or removes it as the proxy starts or stops. The icon means ProxyCli's proxy variables are active in this shell; run `pstatus` to check connectivity. Saving settings with `pset` keeps the current indicator until you apply them.
+`pstop` removes the icon. `ptoggle` shows or removes it as the proxy starts or stops. The icon means ProxyCli's proxy variables are active in this shell; run `pstatus` to check connectivity. Saving settings with `pset` keeps the current indicator until you apply them.
 
 ## Settings
 
@@ -105,9 +105,19 @@ pset --ports auto      # Restore default ports
 
 Run `pset --ports` to show scan ports, or `pset` to show all settings. The defaults are `7890 7891 7892 7893 7897 8888 8080`.
 
+### Prompt icon
+
+```bash
+pset --indicator '🌐'  # Set the prompt icon
+pset --indicator auto  # Restore the default 🚀
+pstart                 # Apply the setting
+```
+
+Run `pset --indicator` to show the icon setting. Use one emoji or symbol without spaces or prompt escapes; combined emoji such as `'👩‍💻'` are supported. Like other settings, it lasts for the current shell session.
+
 ## Proxy Detection
 
-`pstart` applies pending settings first: a manual address is used directly; automatic mode runs a new scan. With no pending settings, it reuses a cached local proxy whose ports are still listening or existing proxy environment variables, and scans when needed. `pscan` always performs a fresh local scan and enables the result; a successful scan switches the address setting to automatic detection.
+`pstart` applies pending address or scan-port settings first: a manual address is used directly; automatic mode runs a new scan. Otherwise, it reuses a cached local proxy whose ports are still listening or existing proxy environment variables, and scans when needed. Changing only the icon does not force a new scan. `pscan` always performs a fresh local scan and enables the result; a successful scan switches the address setting to automatic detection.
 
 Scans try cached ports first, followed by common proxy process ports, configured ports, and other local listeners. Progress shows the candidates, current port, protocols, and results. A failed scan keeps the previous address and shell environment.
 

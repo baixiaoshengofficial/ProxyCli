@@ -7,6 +7,9 @@ _PROXYCLI_DEFAULT_PORTS="7890 7891 7892 7893 7897 8888 8080"
 _PROXYCLI_SCAN_PORTS="${_PROXYCLI_SCAN_PORTS:-$_PROXYCLI_DEFAULT_PORTS}"
 _PROXYCLI_AUTO_READY="${_PROXYCLI_AUTO_READY:-0}"
 _PROXYCLI_SETTINGS_PENDING="${_PROXYCLI_SETTINGS_PENDING:-0}"
+_PROXYCLI_DEFAULT_INDICATOR="🚀"
+_PROXYCLI_INDICATOR="${_PROXYCLI_INDICATOR:-$_PROXYCLI_DEFAULT_INDICATOR}"
+_PROXYCLI_ACTIVE_INDICATOR="${_PROXYCLI_ACTIVE_INDICATOR:-$_PROXYCLI_DEFAULT_INDICATOR}"
 PROXYCLI_MANUAL_PROXY="${PROXYCLI_MANUAL_PROXY:-0}"
 _PROXYCLI_DYNAMIC_PORT_LIMIT=20
 _PROXYCLI_SCAN_TIME_LIMIT=15
@@ -302,12 +305,13 @@ _proxycli_proxy_active() {
 
 # Add only our own prefix, preserving prompt content supplied by the shell/theme.
 _proxycli_refresh_prompt() {
-  local prompt_text="${PS1-}" prefix="🚀 " has_prefix=0
+  local prompt_text="${PS1-}" prefix="$_PROXYCLI_ACTIVE_INDICATOR " has_prefix=0
+  local previous_prefix="${_PROXYCLI_PROMPT_PREFIX:-${_PROXYCLI_DEFAULT_INDICATOR} }"
 
   case "$-" in *i*) ;; *) return 0 ;; esac
   if [ "${_PROXYCLI_PROMPT_PREFIX_ADDED:-0}" = "1" ]; then
     case "$prompt_text" in
-      "$prefix"*) prompt_text="${prompt_text#"$prefix"}"; has_prefix=1 ;;
+      "$previous_prefix"*) prompt_text="${prompt_text#"$previous_prefix"}"; has_prefix=1 ;;
     esac
   fi
 
@@ -316,6 +320,7 @@ _proxycli_refresh_prompt() {
       _PROXYCLI_PROMPT_WAS_SET="${PS1+x}"
     fi
     PS1="${prefix}${prompt_text}"
+    _PROXYCLI_PROMPT_PREFIX="$prefix"
     _PROXYCLI_PROMPT_PREFIX_ADDED=1
   else
     if [ "$has_prefix" = "1" ]; then
@@ -325,7 +330,7 @@ _proxycli_refresh_prompt() {
         unset PS1
       fi
     fi
-    unset _PROXYCLI_PROMPT_PREFIX_ADDED _PROXYCLI_PROMPT_WAS_SET
+    unset _PROXYCLI_PROMPT_PREFIX_ADDED _PROXYCLI_PROMPT_WAS_SET _PROXYCLI_PROMPT_PREFIX
   fi
   return 0
 }
@@ -396,6 +401,7 @@ _proxycli_activate_proxy() {
 
   _proxycli_apply_environment || return 1
   _PROXYCLI_SETTINGS_PENDING=0
+  _PROXYCLI_ACTIVE_INDICATOR="$_PROXYCLI_INDICATOR"
   _proxycli_enable_prompt
   echo "[ProxyCli] Proxy variables enabled (current shell)."
   _proxycli_print_endpoints "${PROXY_ADDRESS:-}" "${SOCKS_ADDRESS:-}"
@@ -466,7 +472,8 @@ proxy_status() {
     echo "[ProxyCli] Status: INACTIVE (current shell)"
   fi
   _proxycli_print_endpoints "$current_http" "$current_socks"
-  if [ "$_PROXYCLI_SETTINGS_PENDING" = "1" ]; then
+  if [ "$_PROXYCLI_SETTINGS_PENDING" = "1" ] ||
+     [ "$_PROXYCLI_INDICATOR" != "$_PROXYCLI_ACTIVE_INDICATOR" ]; then
     echo "[ProxyCli] Settings pending; run pstart to apply."
   fi
   [ -n "$current_http" ] || [ -n "$current_socks" ] || return 0
@@ -560,10 +567,16 @@ set_proxy() {
     echo "[ProxyCli] Current settings:"
     _proxycli_show_address_setting
     echo "  Scan ports: $_PROXYCLI_SCAN_PORTS"
+    printf '  Indicator: %s\n' "$_PROXYCLI_INDICATOR"
     return 0
   fi
 
   case "${1:-}" in
+    --indicator)
+      shift
+      _proxycli_set_indicator "$@"
+      return
+      ;;
     --ports)
       shift
       set_scan_ports "$@"
@@ -571,7 +584,7 @@ set_proxy() {
       ;;
     --address) shift ;;
     *)
-      echo "Usage: pset [--address host:port|--address auto|--ports port ...|--ports auto]" >&2
+      echo "Usage: pset --address [host:port|auto] | --ports [port ...|auto] | --indicator [emoji|auto]" >&2
       return 1
       ;;
   esac
@@ -616,6 +629,29 @@ set_proxy() {
   echo "[ProxyCli] Proxy address saved (current session)."
   _proxycli_show_address_setting
   echo "[ProxyCli] Run pstart to apply."
+}
+
+_proxycli_set_indicator() {
+  local indicator="${1:-}"
+
+  if [ "$#" -eq 0 ]; then
+    printf '[ProxyCli] Indicator: %s\n' "$_PROXYCLI_INDICATOR"
+    return 0
+  fi
+  if [ "$#" -ne 1 ]; then
+    echo "Usage: pset --indicator [emoji|auto]" >&2
+    return 1
+  fi
+  [ "$indicator" != auto ] || indicator="$_PROXYCLI_DEFAULT_INDICATOR"
+  # Prompt strings interpret shell escapes, so accept only literal symbols.
+  case "$indicator" in
+    ''|-*|*[[:space:][:cntrl:]]*|*'$'*|*'`'*|*'\'*|*'%'*|*'!'*)
+      echo "[ProxyCli] Invalid indicator. Use one emoji or symbol without spaces or prompt escapes." >&2
+      return 1
+      ;;
+  esac
+  _PROXYCLI_INDICATOR="$indicator"
+  printf '[ProxyCli] Indicator saved: %s. Run pstart to apply.\n' "$_PROXYCLI_INDICATOR"
 }
 
 set_scan_ports() {
@@ -678,11 +714,16 @@ Scan ports (examples):
   pset --ports auto                Restore default ports
   pset --ports                     Show scan ports
 
+Prompt indicator:
+  pset --indicator '🌐'            Set icon
+  pset --indicator auto            Restore default 🚀
+  pset --indicator                 Show icon setting
+
 Proxy variables apply to this shell and programs started from it.
-Address and scan-port settings apply to the current shell session.
+Settings apply to the current shell session.
 pset saves settings; pstart applies them. pscan rescans and applies.
 Use pstatus to check connectivity.
-The 🚀 prompt icon marks an active ProxyCli shell proxy.
+The prompt icon marks an active ProxyCli shell proxy (default: 🚀).
 EOF
 }
 

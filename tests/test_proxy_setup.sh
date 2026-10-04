@@ -727,6 +727,71 @@ test_noninteractive_prompt() (
   assert_equals 'original> ' "$PS1" "noninteractive stop leaves PS1 unchanged"
 )
 
+test_indicator_settings() (
+  local settings_before invalid status_output
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  assert_equals '[ProxyCli] Indicator: 🚀' "$(set_proxy --indicator)" "indicator defaults to a rocket"
+  PROXY_ADDRESS='http://localhost:7890'
+  SOCKS_ADDRESS='socks5h://localhost:7890'
+  PROXYCLI_MANUAL_PROXY=0
+  PROXYCLI_LAST_HTTP_PORT=7890
+  _PROXYCLI_AUTO_READY=1
+  _PROXYCLI_SETTINGS_PENDING=0
+  _proxycli_cached_proxy_available() { return 0; }
+  detect_proxy() { echo 'FAIL: indicator changes must not force detection' >&2; exit 1; }
+  curl() { return 0; }
+
+  set_proxy --indicator '🌐' >/dev/null
+  assert_equals '[ProxyCli] Indicator: 🌐' "$(set_proxy --indicator)" "indicator query shows the configured icon"
+  assert_equals '1' "$_PROXYCLI_AUTO_READY" "changing an indicator preserves the proxy cache"
+  assert_equals '7890' "$PROXYCLI_LAST_HTTP_PORT" "changing an indicator preserves cached ports"
+  assert_equals '0' "$_PROXYCLI_SETTINGS_PENDING" "indicator changes do not mark proxy settings for rescanning"
+  case "$(set_proxy)" in
+    *'Indicator: 🌐'*) ;;
+    *) echo 'FAIL: all settings should include the indicator' >&2; exit 1 ;;
+  esac
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  assert_equals '[ProxyCli] Indicator: 🌐' "$(set_proxy --indicator)" "reload preserves the configured indicator"
+  _proxycli_cached_proxy_available() { return 0; }
+  detect_proxy() { echo 'FAIL: indicator changes must not force detection' >&2; exit 1; }
+  start_proxy >/dev/null 2>&1
+  assert_equals '🌐' "$_PROXYCLI_ACTIVE_INDICATOR" "start applies the configured indicator"
+
+  settings_before=$(set_proxy)
+  for invalid in '' 'two symbols' $'\n' $'\t' $'\033[31m' --bad '$USER' '$(false)' '`false`' '\u' '%n' '!'; do
+    if set_proxy --indicator "$invalid" >/dev/null 2>&1; then
+      printf 'FAIL: invalid indicator was accepted: %q\n' "$invalid" >&2
+      exit 1
+    fi
+    assert_equals "$settings_before" "$(set_proxy)" "invalid indicator preserves all settings"
+    assert_equals '🌐' "$_PROXYCLI_ACTIVE_INDICATOR" "invalid indicator preserves the applied icon"
+  done
+  if set_proxy --indicator '🌐' '🔥' >/dev/null 2>&1 ||
+     set_proxy --indicator auto '🔥' >/dev/null 2>&1; then
+    echo 'FAIL: indicator setting should reject extra arguments' >&2
+    exit 1
+  fi
+  assert_equals "$settings_before" "$(set_proxy)" "extra arguments preserve indicator settings"
+  set_proxy --indicator auto >/dev/null
+  assert_equals '[ProxyCli] Indicator: 🚀' "$(set_proxy --indicator)" "auto restores the default indicator"
+  assert_equals '🌐' "$_PROXYCLI_ACTIVE_INDICATOR" "restoring the default waits for application"
+  status_output=$(proxy_status)
+  case "$status_output" in
+    *'Settings pending; run pstart to apply.'*) ;;
+    *) echo 'FAIL: unapplied indicator changes should appear in status' >&2; exit 1 ;;
+  esac
+  start_proxy >/dev/null 2>&1
+  assert_equals '🚀' "$_PROXYCLI_ACTIVE_INDICATOR" "start applies the default indicator without rescanning"
+  status_output=$(proxy_status)
+  case "$status_output" in
+    *'Settings pending'*) echo 'FAIL: applying the icon should clear its pending status' >&2; exit 1 ;;
+  esac
+  set_proxy --indicator '👩‍💻' >/dev/null
+  stop_proxy >/dev/null
+  [ -z "${http_proxy+x}" ] || { echo 'FAIL: icon changes must preserve proxy restoration' >&2; exit 1; }
+)
+
 test_interactive_prompt() (
   local temp_dir prompt_shell
   temp_dir=$(mktemp -d)
@@ -792,6 +857,29 @@ assert_equals '1' "$theme_updates" "existing theme hook still runs"
 assert_equals '🚀 new theme> ' "$PS1" "theme updates keep the rocket prefix"
 run_prompt_hooks
 assert_equals '🚀 new theme> ' "$PS1" "prompt refresh does not duplicate the icon"
+set_proxy --indicator '🌐' >/dev/null
+assert_equals '🚀 new theme> ' "$PS1" "setting an indicator keeps the old icon until application"
+run_prompt_hooks
+assert_equals '🚀 new theme> ' "$PS1" "theme refresh preserves the applied icon while a new one is pending"
+source "$1/src/proxy-setup.sh" >/dev/null
+assert_equals '🚀 new theme> ' "$PS1" "reload preserves the old applied icon"
+assert_equals '[ProxyCli] Indicator: 🌐' "$(set_proxy --indicator)" "reload preserves the new configured icon"
+start_proxy >/dev/null
+assert_equals '🌐 new theme> ' "$PS1" "applying an indicator replaces the old prefix"
+assert_equals "$registered_hooks" "$(typeset -p "$prompt_hook_variable")" "changing an indicator preserves existing prompt hooks"
+for icon in '👩‍💻' '🇨🇳' '1️⃣' '*️⃣'; do
+  set_proxy --indicator "$icon" >/dev/null
+  start_proxy >/dev/null
+  assert_equals "$icon new theme> " "$PS1" "combined emoji replace the previous prefix"
+  run_prompt_hooks
+  assert_equals "$icon new theme> " "$PS1" "combined emoji remain stable after prompt refresh"
+done
+set_proxy --indicator auto >/dev/null
+assert_equals '*️⃣ new theme> ' "$PS1" "default indicator waits for application"
+stop_proxy >/dev/null
+assert_equals 'new theme> ' "$PS1" "stop removes the applied prefix even when a different indicator is pending"
+start_proxy >/dev/null
+assert_equals '🚀 new theme> ' "$PS1" "starting again uses the default indicator"
 set_proxy --address localhost:9000 >/dev/null
 assert_equals '🚀 new theme> ' "$PS1" "pending settings keep the active icon"
 stop_proxy >/dev/null
@@ -900,6 +988,7 @@ test_installer_configuration
 test_installer_literal_paths
 test_installer_idempotence
 test_noninteractive_prompt
+test_indicator_settings
 test_interactive_prompt
 
 echo "ProxyCli shell tests passed."
