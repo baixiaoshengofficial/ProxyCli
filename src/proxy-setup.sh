@@ -300,6 +300,75 @@ _proxycli_proxy_active() {
   [ "${PROXYCLI_ENV_SAVED:-0}" = "1" ]
 }
 
+# Add only our own prefix, preserving prompt content supplied by the shell/theme.
+_proxycli_refresh_prompt() {
+  local prompt_text="${PS1-}" prefix="🚀 " has_prefix=0
+
+  case "$-" in *i*) ;; *) return 0 ;; esac
+  if [ "${_PROXYCLI_PROMPT_PREFIX_ADDED:-0}" = "1" ]; then
+    case "$prompt_text" in
+      "$prefix"*) prompt_text="${prompt_text#"$prefix"}"; has_prefix=1 ;;
+    esac
+  fi
+
+  if _proxycli_proxy_active; then
+    if [ "$has_prefix" = "0" ]; then
+      _PROXYCLI_PROMPT_WAS_SET="${PS1+x}"
+    fi
+    PS1="${prefix}${prompt_text}"
+    _PROXYCLI_PROMPT_PREFIX_ADDED=1
+  else
+    if [ "$has_prefix" = "1" ]; then
+      if [ "${_PROXYCLI_PROMPT_WAS_SET:-}" = x ] || [ -n "$prompt_text" ]; then
+        PS1="$prompt_text"
+      else
+        unset PS1
+      fi
+    fi
+    unset _PROXYCLI_PROMPT_PREFIX_ADDED _PROXYCLI_PROMPT_WAS_SET
+  fi
+  return 0
+}
+
+# Bash prompt commands share the previous command's exit status.
+_proxycli_bash_prompt() {
+  local previous_exit=$?
+  _proxycli_refresh_prompt
+  return "$previous_exit"
+}
+
+_proxycli_enable_prompt() {
+  local hook installed=0 declaration
+
+  case "$-" in *i*) ;; *) return 0 ;; esac
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    for hook in "${precmd_functions[@]-}"; do
+      [ "$hook" != _proxycli_refresh_prompt ] || installed=1
+    done
+    [ "$installed" = "1" ] || precmd_functions+=(_proxycli_refresh_prompt)
+  else
+    declaration=$(declare -p PROMPT_COMMAND 2>/dev/null) || declaration=""
+    declaration="${declaration#declare }"
+    declaration="${declaration%% *}"
+    case "$declaration" in
+      *a*)
+        for hook in "${PROMPT_COMMAND[@]-}"; do
+          [ "$hook" != _proxycli_bash_prompt ] || installed=1
+        done
+        [ "$installed" = "1" ] || PROMPT_COMMAND+=(_proxycli_bash_prompt)
+        ;;
+      *)
+        # A newline also supports existing commands ending in a shell comment.
+        case $'\n'"${PROMPT_COMMAND-}"$'\n' in
+          *$'\n_proxycli_bash_prompt\n'*) ;;
+          *) PROMPT_COMMAND="${PROMPT_COMMAND-}"$'\n_proxycli_bash_prompt' ;;
+        esac
+        ;;
+    esac
+  fi
+  _proxycli_refresh_prompt
+}
+
 _proxycli_apply_environment() {
   local was_saved="${PROXYCLI_ENV_SAVED:-0}"
 
@@ -327,6 +396,7 @@ _proxycli_activate_proxy() {
 
   _proxycli_apply_environment || return 1
   _PROXYCLI_SETTINGS_PENDING=0
+  _proxycli_enable_prompt
   echo "[ProxyCli] Proxy variables enabled (current shell)."
   _proxycli_print_endpoints "${PROXY_ADDRESS:-}" "${SOCKS_ADDRESS:-}"
 }
@@ -372,6 +442,7 @@ stop_proxy() {
   fi
 
   _proxycli_restore_environment
+  _proxycli_refresh_prompt
   echo "[ProxyCli] Stopped; previous proxy environment restored."
 }
 
@@ -611,6 +682,7 @@ Proxy variables apply to this shell and programs started from it.
 Address and scan-port settings apply to the current shell session.
 pset saves settings; pstart applies them. pscan rescans and applies.
 Use pstatus to check connectivity.
+The 🚀 prompt icon marks an active ProxyCli shell proxy.
 EOF
 }
 

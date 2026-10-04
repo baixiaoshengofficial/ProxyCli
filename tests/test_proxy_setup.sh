@@ -714,6 +714,166 @@ test_installer_idempotence() (
   done
 )
 
+test_noninteractive_prompt() (
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  PS1='original> '
+  PROMPT_COMMAND='original_prompt_command'
+  set_proxy --address localhost:7890 >/dev/null
+  start_proxy >/dev/null
+  assert_equals 'original> ' "$PS1" "noninteractive start leaves PS1 unchanged"
+  assert_equals 'original_prompt_command' "$PROMPT_COMMAND" "noninteractive start leaves prompt commands unchanged"
+  stop_proxy >/dev/null
+  assert_equals 'original> ' "$PS1" "noninteractive stop leaves PS1 unchanged"
+)
+
+test_interactive_prompt() (
+  local temp_dir prompt_shell
+  temp_dir=$(mktemp -d)
+  trap 'rm -rf "$temp_dir"' EXIT
+  declare -f assert_equals > "$temp_dir/prompt-test.sh"
+  cat >> "$temp_dir/prompt-test.sh" <<'SHELL'
+set -eu
+unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+source "$1/src/proxy-setup.sh" >/dev/null
+base_prompt=$'header\nuser@host:~> '
+theme_prompt="$base_prompt"
+theme_updates=0
+PS1="$base_prompt"
+
+run_prompt_hooks() {
+  local hook_command prompt_attributes
+  if [ -n "${ZSH_VERSION:-}" ]; then
+    for hook_command in "${precmd_functions[@]}"; do "$hook_command"; done
+  else
+    prompt_attributes=$(declare -p PROMPT_COMMAND)
+    prompt_attributes="${prompt_attributes#declare }"
+    prompt_attributes="${prompt_attributes%% *}"
+    case "$prompt_attributes" in
+      *a*) for hook_command in "${PROMPT_COMMAND[@]}"; do eval "$hook_command"; done ;;
+      *) eval "$PROMPT_COMMAND" ;;
+    esac
+  fi
+}
+
+if [ -n "${ZSH_VERSION:-}" ]; then
+  theme_hook() { theme_updates=$((theme_updates + 1)); PS1="$theme_prompt"; }
+  precmd_functions=(theme_hook)
+  prompt_hook_variable=precmd_functions
+else
+  PROMPT_COMMAND='theme_updates=$((theme_updates + 1)); PS1="$theme_prompt" # keep this comment'
+  original_prompt_command="$PROMPT_COMMAND"
+  prompt_hook_variable=PROMPT_COMMAND
+fi
+assert_equals "$base_prompt" "$PS1" "loading commands leaves the prompt unchanged"
+set_proxy --address localhost:7890 >/dev/null
+assert_equals "$base_prompt" "$PS1" "saving settings does not add a prompt icon"
+start_proxy >/dev/null
+assert_equals "🚀 $base_prompt" "$PS1" "interactive start adds the rocket prefix"
+registered_hooks=$(typeset -p "$prompt_hook_variable")
+start_proxy >/dev/null
+source "$1/src/proxy-setup.sh" >/dev/null
+start_proxy >/dev/null
+assert_equals "🚀 $base_prompt" "$PS1" "repeated starts and reloads do not duplicate the icon"
+assert_equals "$registered_hooks" "$(typeset -p "$prompt_hook_variable")" "repeated starts and reloads do not duplicate hooks"
+
+if [ -z "${ZSH_VERSION:-}" ]; then
+  assert_equals "$original_prompt_command"$'\n_proxycli_bash_prompt' "$PROMPT_COMMAND" "Bash keeps the existing prompt command and its comment"
+  set +e
+  (exit 7)
+  _proxycli_bash_prompt
+  prompt_exit=$?
+  set -e
+  assert_equals '7' "$prompt_exit" "Bash prompt hook preserves exit status"
+fi
+theme_prompt='new theme> '
+run_prompt_hooks
+assert_equals '1' "$theme_updates" "existing theme hook still runs"
+assert_equals '🚀 new theme> ' "$PS1" "theme updates keep the rocket prefix"
+run_prompt_hooks
+assert_equals '🚀 new theme> ' "$PS1" "prompt refresh does not duplicate the icon"
+set_proxy --address localhost:9000 >/dev/null
+assert_equals '🚀 new theme> ' "$PS1" "pending settings keep the active icon"
+stop_proxy >/dev/null
+assert_equals 'new theme> ' "$PS1" "stop removes the icon and preserves the current theme"
+run_prompt_hooks
+assert_equals 'new theme> ' "$PS1" "inactive prompt refresh does not add an icon"
+
+toggle_proxy >/dev/null
+assert_equals '🚀 new theme> ' "$PS1" "toggle on adds the icon"
+toggle_proxy >/dev/null
+assert_equals 'new theme> ' "$PS1" "toggle off removes the icon"
+start_proxy >/dev/null
+PS1='user override> '
+stop_proxy >/dev/null
+assert_equals 'user override> ' "$PS1" "stop preserves a prompt replaced by the user"
+
+PS1=''
+start_proxy >/dev/null
+assert_equals '🚀 ' "$PS1" "an empty prompt gets an icon"
+stop_proxy >/dev/null
+assert_equals 'x' "${PS1+x}" "stop preserves an explicitly empty PS1"
+assert_equals '' "$PS1" "stop restores the empty prompt"
+unset PS1
+start_proxy >/dev/null
+stop_proxy >/dev/null
+assert_equals '' "${PS1+x}" "stop restores an unset PS1"
+
+PS1='failure test> '
+set_proxy --address auto >/dev/null
+detect_proxy() { return 1; }
+if start_proxy >/dev/null 2>&1 || scan_proxy >/dev/null 2>&1; then
+  echo 'FAIL: detection failure should fail activation' >&2
+  exit 1
+fi
+assert_equals 'failure test> ' "$PS1" "failed activation does not add an icon"
+detect_proxy() {
+  PROXY_ADDRESS='http://localhost:7890'
+  SOCKS_ADDRESS='socks5h://localhost:7890'
+  _PROXYCLI_AUTO_READY=1
+}
+scan_proxy >/dev/null 2>&1
+assert_equals '🚀 failure test> ' "$PS1" "successful scan also enables the icon"
+stop_proxy >/dev/null
+
+if [ -z "${ZSH_VERSION:-}" ]; then
+  unset PROMPT_COMMAND
+  PROMPT_COMMAND=()
+  PROMPT_COMMAND[2]='theme_updates=$((theme_updates + 1))'
+  PROMPT_COMMAND[5]='PS1="$theme_prompt"'
+  export PROMPT_COMMAND
+  theme_updates=0
+  theme_prompt='array theme> '
+  set_proxy --address localhost:7890 >/dev/null
+  start_proxy >/dev/null
+  assert_equals '3' "${#PROMPT_COMMAND[@]}" "Bash array gains one hook"
+  assert_equals 'theme_updates=$((theme_updates + 1))' "${PROMPT_COMMAND[2]}" "existing sparse array index is preserved"
+  assert_equals 'PS1="$theme_prompt"' "${PROMPT_COMMAND[5]}" "existing array theme command is preserved"
+  run_prompt_hooks
+  assert_equals '1' "$theme_updates" "array theme hooks still execute"
+  assert_equals '🚀 array theme> ' "$PS1" "array prompt hooks preserve the icon"
+  start_proxy >/dev/null
+  assert_equals '3' "${#PROMPT_COMMAND[@]}" "repeated starts do not duplicate an array hook"
+  stop_proxy >/dev/null
+  assert_equals 'array theme> ' "$PS1" "array theme survives stop"
+fi
+SHELL
+  for prompt_shell in bash "${PROXYCLI_TEST_ZSH:-zsh}"; do
+    command -v "$prompt_shell" >/dev/null 2>&1 || continue
+    if [ "$prompt_shell" = bash ]; then
+      bash --noprofile --norc -i "$temp_dir/prompt-test.sh" "$repo_root" 2> "$temp_dir/stderr" || {
+        cat "$temp_dir/stderr" >&2
+        exit 1
+      }
+    else
+      "$prompt_shell" -f -i "$temp_dir/prompt-test.sh" "$repo_root" 2> "$temp_dir/stderr" || {
+        cat "$temp_dir/stderr" >&2
+        exit 1
+      }
+    fi
+  done
+)
+
 bash -n "$repo_root/install.sh"
 bash -n "$repo_root/src/proxy-setup.sh"
 SHELL=/bin/bash bash "$repo_root/install.sh" --help >/dev/null
@@ -739,5 +899,7 @@ test_shell_scope_and_help
 test_installer_configuration
 test_installer_literal_paths
 test_installer_idempotence
+test_noninteractive_prompt
+test_interactive_prompt
 
 echo "ProxyCli shell tests passed."

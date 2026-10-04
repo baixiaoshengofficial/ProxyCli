@@ -65,6 +65,16 @@ bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
 | `pset` | Show current settings |
 | `phelp` | Show help |
 
+### Prompt indicator
+
+After `pstart` or a successful `pscan`, a rocket appears before the existing prompt:
+
+```text
+🚀 root@host:~#
+```
+
+`pstop` removes the rocket. `ptoggle` shows or removes it as the proxy starts or stops. The icon means ProxyCli's proxy variables are active in this shell; run `pstatus` to check connectivity. Saving settings with `pset` keeps the current indicator until you apply them.
+
 ## Settings
 
 `pset` saves settings for the current shell session. Run `pstart` to apply them. An active proxy keeps its current environment until you apply the new settings.

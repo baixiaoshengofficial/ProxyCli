@@ -62,6 +62,16 @@ bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
 | `pset` | 查看当前设置 |
 | `phelp` | 查看帮助 |
 
+### 提示符标记
+
+执行 `pstart` 或成功执行 `pscan` 后，原有提示符前会显示火箭：
+
+```text
+🚀 root@host:~#
+```
+
+`pstop` 会移除火箭，`ptoggle` 会随启停显示或移除。标记表示当前 shell 已启用 ProxyCli 的代理变量，连接是否可用请用 `pstatus` 检查。通过 `pset` 保存设置时，标记保持当前状态，应用设置后再更新。
+
 ## 设置
 
 `pset` 保存当前 shell 会话的设置，执行 `pstart` 后生效。代理已启动时，应用新设置前会继续使用原有环境。
