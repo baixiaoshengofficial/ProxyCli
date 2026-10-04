@@ -15,6 +15,15 @@ _PROXYCLI_DYNAMIC_PORT_LIMIT=20
 _PROXYCLI_SCAN_TIME_LIMIT=15
 _PROXYCLI_PROCESS_PATTERN='clash|mihomo|sing[-_]?box|xray|v2ray|hysteria|trojan|ss-local|sslocal|shadowsocks|tuic'
 
+# Keep redirected output plain, and honor NO_COLOR even when it is empty.
+_proxycli_heading() {
+  if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR+x}" ]; then
+    printf '\033[1;36m%s\033[0m\n' "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
 _proxycli_redact_url() {
   case "$1" in
     *://*@*)
@@ -672,30 +681,35 @@ _proxycli_set_scan_ports() {
 
 show_help() {
   _proxycli_no_arguments phelp "$@" || return 1
+  _proxycli_heading 'ProxyCli · Shell proxy'
+  printf '\n'
+  _proxycli_heading 'Commands'
   cat <<'EOF'
-ProxyCli commands:
-  pstart                 Enable this shell's proxy
-  pscan                  Rescan local proxies and enable the result
-  pstop                  Restore the previous proxy environment
-  ptoggle                Start or stop ProxyCli
-  pstatus                Show proxy state and check connectivity
-  pset                   Show all settings
-  phelp                  Show this help
+  pstart     Start proxy
+  pstop      Stop and restore the previous environment
+  ptoggle    Start or stop
+  pscan      Rescan local proxies and start
+  pstatus    Show state and check connectivity
+  pset       Show all settings
+  phelp      Show help
 
-Settings (current session; run pstart to apply):
-  pset --address host:port         Set HTTP and SOCKS5 address
-  pset --ports 7890 1080           Set scan ports
-  pset --indicator 🌐             Set prompt icon (default: 🚀)
+EOF
+  _proxycli_heading 'Settings · run pstart to apply'
+  cat <<'EOF'
+  pset --address host:port    HTTP and SOCKS5 address
+  pset --ports 7890 1080      Scan ports
+  pset --indicator 🌐        Prompt icon (default: 🚀)
 
-Restore defaults:
-  pset --address auto              Use automatic detection
-  pset --ports auto                Restore default scan ports
-  pset --indicator auto            Restore 🚀
+EOF
+  _proxycli_heading 'Restore defaults'
+  cat <<'EOF'
+  pset --address auto        Automatic detection
+  pset --ports auto          Default scan ports
+  pset --indicator auto      Default icon 🚀
 
 View one setting: pset --address, pset --ports, or pset --indicator
-For separate addresses: pset --address http_host:port socks_host:port
-Proxy variables apply to this shell and programs started from it.
-The prompt icon indicates ProxyCli is active; pstatus checks connectivity.
+Separate HTTP / SOCKS5: pset --address http_host:port socks_host:port
+Session only; applies to this shell and programs started from it.
 EOF
 }
 
@@ -710,5 +724,11 @@ unalias pports 2>/dev/null || true
 
 _PROXYCLI_RUNTIME_LOADED=1
 case "$-" in
-  *i*) echo "[ProxyCli] Loaded. Type 'phelp' for commands." ;;
+  *i*)
+    if _proxycli_proxy_active; then
+      _proxycli_heading '[ProxyCli] Active · status: pstatus · help: phelp'
+    else
+      _proxycli_heading '[ProxyCli] Ready · start: pstart · help: phelp'
+    fi
+    ;;
 esac

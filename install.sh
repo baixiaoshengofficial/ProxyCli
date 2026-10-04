@@ -26,12 +26,22 @@ MARKER_BEGIN="# >>> ProxyCli configuration >>>"
 MARKER_END="# <<< ProxyCli configuration <<<"
 LEGACY_MARKER="# Proxy Manager Configuration"
 
+# Color headings only when their output goes to a capable terminal.
+_proxycli_install_heading() {
+  local text=$1 color="${2:-36}"
+  if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR+x}" ]; then
+    printf '\033[1;%sm%s\033[0m\n' "$color" "$text"
+  else
+    printf '%s\n' "$text"
+  fi
+}
+
 print_error() {
-  printf '[%s] %s\n' "$PROJECT_NAME" "$1" >&2
+  _proxycli_install_heading "[$PROJECT_NAME] ✗ $1" 31 >&2
 }
 
 print_success() {
-  printf '[%s] %s\n' "$PROJECT_NAME" "$1"
+  _proxycli_install_heading "[$PROJECT_NAME] ✓ $1" 32
 }
 
 detect_shell() {
@@ -164,9 +174,9 @@ install_proxycli() {
     }
   fi
 
-  print_success "${action} runtime: ${SOURCE_FILE}"
-  print_success "Load this version in the current shell:"
-  printf '  . %s\n' "$(quote_shell_path "$SOURCE_FILE")"
+  print_success "${action} for ${shell_type}"
+  printf '  Load now: source %s\n' "$(quote_shell_path "$SOURCE_FILE")"
+  printf '  New terminals load automatically.\n'
 }
 
 uninstall_proxycli() {
@@ -184,19 +194,18 @@ uninstall_proxycli() {
     print_error "Could not remove runtime files."
     return 1
   }
-  print_success "Removed ProxyCli configuration and runtime files."
-  print_success "Restart the shell to remove commands from the current session."
+  print_success "Uninstalled"
+  printf '  Restart the shell to remove loaded commands.\n'
 }
 
 show_installer_help() {
+  _proxycli_install_heading "${PROJECT_NAME} · Installer"
   cat <<EOF
-${PROJECT_NAME} installer
-
 Usage: bash install.sh [install|uninstall|help]
 
-  install      Download and configure ${PROJECT_NAME} (default)
-  uninstall    Remove ${PROJECT_NAME} configuration and runtime files
-  help         Show this message
+  install      Install or update (default)
+  uninstall    Remove runtime and shell configuration
+  help         Show help
 EOF
 }
 

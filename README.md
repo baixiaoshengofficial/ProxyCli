@@ -12,6 +12,8 @@ bash <(curl -fsSL baixiaosheng.de/proxycli) && source "$HOME/.proxycli/src/proxy
 
 Requires `curl`. The installer configures Bash startup files (including SSH login shells) or Zsh's startup file. `source` loads the installed version into the current shell; new terminals load it automatically. Loading commands does not start the proxy.
 
+The startup notice shows `Ready` when commands are loaded, or `Active` if this shell's ProxyCli proxy is already enabled. Headings use color on supported terminals; set `NO_COLOR=1` to disable it. Redirected output stays plain.
+
 <details>
 <summary>GitHub fallback and manual installation</summary>
 

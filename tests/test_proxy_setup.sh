@@ -552,6 +552,13 @@ test_shell_scope_and_help() (
   assert_equals "$settings_before" "$(set_proxy)" "rejected settings preserve the configured address"
   help_output=$(show_help)
   case "$help_output" in
+    *$'\033'*) echo 'FAIL: redirected help should not contain color escapes' >&2; exit 1 ;;
+  esac
+  case "$help_output" in
+    'ProxyCli · Shell proxy'*'Commands'*'Settings · run pstart to apply'*'Restore defaults'*) ;;
+    *) echo 'FAIL: help should group commands, settings, and defaults' >&2; exit 1 ;;
+  esac
+  case "$help_output" in
     *--system*) echo "FAIL: help should omit the removed system setting" >&2; exit 1 ;;
   esac
   case "$help_output" in
@@ -643,11 +650,14 @@ test_installer_configuration() {
 
     install_output=$(install_proxycli)
     case "$install_output" in
-      *"Updated runtime: $SOURCE_FILE"*) ;;
+      *'[ProxyCli] ✓ Updated for bash'*"Load now: source $(quote_shell_path "$SOURCE_FILE")"*'New terminals load automatically.'*) ;;
       *)
         echo "FAIL: reinstall should report that the runtime was updated" >&2
         exit 1
         ;;
+    esac
+    case "$install_output" in
+      *$'\033'*) echo 'FAIL: redirected installer output should not contain color escapes' >&2; exit 1 ;;
     esac
     grep -q "alias pscan=" "$SOURCE_FILE" || {
       echo "FAIL: reinstall should overwrite the old runtime" >&2
@@ -659,6 +669,14 @@ test_installer_configuration() {
       echo 'FAIL: reinstall must preserve the existing configuration exactly' >&2
       exit 1
     }
+
+    rm -f "$SOURCE_FILE"
+    install_output=$(install_proxycli)
+    case "$install_output" in
+      *'[ProxyCli] ✓ Installed for bash'*) ;;
+      *) echo 'FAIL: a fresh installation should report installed' >&2; exit 1 ;;
+    esac
+    assert_equals '[ProxyCli] ✗ Download failed' "$(print_error 'Download failed' 2>&1)" "installer errors use a concise failure marker"
 
     login_output=$(env -i HOME="$temp_home" SHELL=/bin/bash PATH="$PATH" \
       bash --login -c 'alias pstart >/dev/null && printf "PROXYCLI_LOGIN_LOADED|%s" "${PROXYCLI_ENV_SAVED:-0}"')
@@ -673,7 +691,7 @@ test_installer_configuration() {
 
     remove_config_block "$config_file"
     assert_equals $'keep-before\nkeep-after' "$(cat "$config_file")" "installer removes only its configuration"
-    uninstall_proxycli >/dev/null
+    assert_equals $'[ProxyCli] ✓ Uninstalled\n  Restart the shell to remove loaded commands.' "$(uninstall_proxycli)" "uninstall reports success and the next step"
     assert_equals ': keep-login' "$(cat "$login_config")" "uninstall removes the login profile block"
   )
   rm -rf "$temp_home"
@@ -821,6 +839,11 @@ test_interactive_prompt() (
 set -eu
 unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 source "$1/src/proxy-setup.sh" >/dev/null
+assert_equals '[ProxyCli] Ready · start: pstart · help: phelp' "$(source "$1/src/proxy-setup.sh")" "interactive loading shows commands are ready"
+[ -z "${PROXYCLI_ENV_SAVED+x}" ] || { echo 'FAIL: a ready notice must not enable the proxy' >&2; exit 1; }
+case "$(show_help)" in
+  *$'\033'*) echo 'FAIL: captured interactive help should not contain color escapes' >&2; exit 1 ;;
+esac
 base_prompt=$'header\nuser@host:~> '
 theme_prompt="$base_prompt"
 theme_updates=0
@@ -855,6 +878,7 @@ set_proxy --address localhost:7890 >/dev/null
 assert_equals "$base_prompt" "$PS1" "saving settings does not add a prompt icon"
 start_proxy >/dev/null
 assert_equals "🚀 $base_prompt" "$PS1" "interactive start adds the rocket prefix"
+assert_equals '[ProxyCli] Active · status: pstatus · help: phelp' "$(source "$1/src/proxy-setup.sh")" "reload of an active shell reports its actual state"
 registered_hooks=$(typeset -p "$prompt_hook_variable")
 start_proxy >/dev/null
 source "$1/src/proxy-setup.sh" >/dev/null
