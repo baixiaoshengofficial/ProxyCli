@@ -162,7 +162,7 @@ test_detection_order() (
   # shellcheck source=/dev/null
   source "$repo_root/src/proxy-setup.sh" >/dev/null
 
-  _PROXYCLI_SCAN_PORTS="9001 7001 invalid 70000 9002"
+  _PROXYCLI_SCAN_PORTS="9001 7001 invalid 70000 0 07001 9002"
   unset PROXYCLI_LAST_HTTP_PORT PROXYCLI_LAST_SOCKS_PORT
   _proxycli_listeners() {
     printf '%s\n' '1 6001' '0 7001' '0 7001' '1 8001'
@@ -287,8 +287,8 @@ test_status_uses_full_proxy_url() (
   PROXYCLI_ENV_SAVED=1
   PROXY_ADDRESS="http://proxy.example:3128"
   SOCKS_ADDRESS="socks5://proxy.example:1080"
-  http_proxy="$PROXY_ADDRESS"
-  all_proxy="$SOCKS_ADDRESS"
+  http_proxy="http://actual.example:8080"
+  all_proxy="socks5h://actual.example:1081"
 
   curl() { return 0; }
   _proxycli_probe_http_url() {
@@ -301,149 +301,147 @@ test_status_uses_full_proxy_url() (
   }
 
   proxy_status >/dev/null
-  assert_equals "$PROXY_ADDRESS" "$checked_http_url" "status checks the configured HTTP proxy URL"
-  assert_equals "$SOCKS_ADDRESS" "$checked_socks_url" "status checks the configured SOCKS proxy URL"
+  assert_equals "$http_proxy" "$checked_http_url" "status checks the actual HTTP proxy URL"
+  assert_equals "$all_proxy" "$checked_socks_url" "status checks the actual SOCKS proxy URL"
+  unset PROXYCLI_ENV_SAVED
+  proxy_status >/dev/null
+  assert_equals "$http_proxy" "$checked_http_url" "status also checks externally configured proxy variables"
 )
 
-test_system_proxy_modes() (
-  local temp_state schema key status_output
-  declare -A settings=()
-
-  temp_state=$(mktemp -d)
-  trap 'rm -rf "$temp_state"' EXIT
-  XDG_STATE_HOME="$temp_state"
-  XDG_CURRENT_DESKTOP=GNOME
-  uname() { printf '%s\n' Linux; }
-  gsettings() {
-    local action="$1" schema="${2:-}" setting="${3:-}"
-    case "$action" in
-      list-schemas) printf '%s\n' org.gnome.system.proxy ;;
-      get) printf '%s\n' "${settings[$schema:$setting]-}" ;;
-      set) settings[$schema:$setting]="$4" ;;
-      *) return 1 ;;
-    esac
-  }
-
+test_http_only_and_failed_scan() (
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
   source "$repo_root/src/proxy-setup.sh" >/dev/null
-  while read -r schema key; do
-    settings[$schema:$key]="'previous'"
-  done <<EOF
-$(_proxycli_gnome_keys)
-EOF
-  settings[org.gnome.system.proxy:mode]="'auto'"
-  PROXYCLI_MANUAL_PROXY=1
-  PROXY_ADDRESS=http://127.0.0.1:7890
-  SOCKS_ADDRESS=socks5://127.0.0.1:1080
-  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY
-
-  start_proxy >/dev/null
-  [ -n "${http_proxy:-}" ] || { echo "FAIL: default start should set the shell proxy" >&2; exit 1; }
-  assert_equals "'auto'" "${settings[org.gnome.system.proxy:mode]}" "default start leaves system settings unchanged"
-  set_proxy --system on >/dev/null
-  [ -z "${http_proxy+x}" ] || { echo "FAIL: selecting system mode should restore shell variables" >&2; exit 1; }
-  [ -f "$temp_state/proxycli/system-mode" ] || { echo "FAIL: system mode should persist across shells" >&2; exit 1; }
-
-  start_proxy >/dev/null
-  [ -z "${http_proxy+x}" ] || { echo "FAIL: global start should leave shell variables unchanged" >&2; exit 1; }
-  assert_equals "'manual'" "${settings[org.gnome.system.proxy:mode]}" "global start enables GNOME proxy"
-  assert_equals 7890 "${settings[org.gnome.system.proxy.http:port]}" "global start sets HTTP port"
-  assert_equals 1080 "${settings[org.gnome.system.proxy.socks:port]}" "global start sets SOCKS port"
   curl() { return 0; }
+  _proxycli_candidate_ports() { printf '%s\n' 7890; }
+  _proxycli_probe_http_url() { return 0; }
+  _proxycli_probe_socks_url() { return 1; }
+  scan_proxy >/dev/null 2>&1
+  assert_equals 'http://127.0.0.1:7890' "$http_proxy" "HTTP-only activation succeeds"
+  [ -z "${all_proxy+x}" ] || { echo 'FAIL: HTTP-only activation must unset SOCKS variables' >&2; exit 1; }
+  _proxycli_probe_http_url() { return 1; }
+  if scan_proxy >/dev/null 2>&1; then
+    echo 'FAIL: unavailable ports must fail detection' >&2
+    exit 1
+  fi
+  assert_equals 'http://127.0.0.1:7890' "$http_proxy" "failed scan preserves the active environment"
+  assert_equals 'http://127.0.0.1:7890' "$PROXY_ADDRESS" "failed scan preserves the selected address"
+  assert_equals '1' "$_PROXYCLI_AUTO_READY" "failed scan preserves the previous detection state"
+  stop_proxy >/dev/null
+  _proxycli_probe_socks_url() { return 0; }
+  detect_proxy >/dev/null 2>&1
+  [ -z "${PROXYCLI_LAST_HTTP_PORT+x}" ] || { echo 'FAIL: SOCKS-only scan must clear the old HTTP port' >&2; exit 1; }
+)
+
+test_existing_environment_restart() (
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+  export HTTPS_PROXY='http://external.example:3128'
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  _PROXYCLI_AUTO_READY=0
+  PROXYCLI_MANUAL_PROXY=0
+  detect_proxy() { echo 'FAIL: an existing environment should not trigger a scan' >&2; exit 1; }
+  start_proxy >/dev/null 2>&1
+  start_proxy >/dev/null 2>&1
+  assert_equals 'http://external.example:3128' "$http_proxy" "repeated start reuses an existing HTTP proxy"
+  stop_proxy >/dev/null
+  assert_equals 'http://external.example:3128' "$HTTPS_PROXY" "stop restores the external proxy"
+  [ -z "${http_proxy+x}" ] || { echo 'FAIL: stop should restore originally unset lowercase variables' >&2; exit 1; }
+)
+
+test_validation_and_reload() (
+  local invalid settings_before command_name output
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  set_proxy --address localhost:7890 >/dev/null
+  set_proxy --ports 07890 7890 01080 >/dev/null
+  assert_equals '7890 1080' "$_PROXYCLI_SCAN_PORTS" "leading zero ports are normalized and deduplicated"
+  settings_before=$(set_proxy)
+  for invalid in '' --bad host host:0 host:65536 host:abc host:7890/path \
+    'http://host:7890?x=1' 'socks5://host:7890' 'ftp://host:7890' '::1:7890' 'http://:7890' 'http://host name:7890'; do
+    if set_proxy --address "$invalid" >/dev/null 2>&1; then
+      printf 'FAIL: invalid address accepted: %s\n' "$invalid" >&2
+      exit 1
+    fi
+    assert_equals "$settings_before" "$(set_proxy)" "invalid address leaves settings unchanged"
+  done
+  if set_proxy --address localhost:7890 '' >/dev/null 2>&1 ||
+     set_proxy --address localhost:7890 --bad >/dev/null 2>&1 ||
+     set_proxy --ports '' >/dev/null 2>&1; then
+    echo 'FAIL: empty or invalid additional arguments should be rejected' >&2
+    exit 1
+  fi
+  for command_name in start_proxy scan_proxy stop_proxy toggle_proxy proxy_status show_help; do
+    if "$command_name" --bad >/dev/null 2>&1; then
+      printf 'FAIL: %s should reject unexpected arguments\n' "$command_name" >&2
+      exit 1
+    fi
+  done
+  assert_equals "$settings_before" "$(set_proxy)" "rejected arguments leave settings unchanged"
+  set_proxy --address 'https://user:secret@proxy.example:03128' 'socks5h://[::1]:01080' >/dev/null
+  assert_equals 'https://user:secret@proxy.example:3128' "$PROXY_ADDRESS" "HTTP scheme and credentials are preserved"
+  assert_equals 'socks5h://[::1]:1080' "$SOCKS_ADDRESS" "IPv6 and SOCKS DNS mode are preserved"
+  assert_equals 'http://***@proxy.example:3128' "$(_proxycli_redact_url 'http://user:secret@part@proxy.example:3128')" "redaction hides all user information"
+  start_proxy >/dev/null
+  settings_before=$(set_proxy)
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  assert_equals "$settings_before" "$(set_proxy)" "reload preserves address and scan-port settings"
+  assert_equals '1' "$PROXYCLI_ENV_SAVED" "reload preserves the saved environment"
+  stop_proxy >/dev/null
+  [ -z "${http_proxy+x}" ] || { echo 'FAIL: stop after reload must restore the original environment' >&2; exit 1; }
+  _PROXYCLI_AUTO_READY=1
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  assert_equals '1' "$_PROXYCLI_AUTO_READY" "reload preserves detection readiness"
+  output=$(bash --noprofile --norc -c 'source "$1/src/proxy-setup.sh"' _ "$repo_root")
+  assert_equals '' "$output" "noninteractive loading does not print a banner"
+)
+
+test_shell_scope_and_help() (
+  local settings_before help_output child_output status_output
+
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  curl() { return 0; }
+  set_proxy --address 127.0.0.1:7890 >/dev/null
+  settings_before=$(set_proxy)
+  if set_proxy --system on >/dev/null 2>&1 || set_proxy --system off >/dev/null 2>&1; then
+    echo "FAIL: removed system setting should be rejected" >&2
+    exit 1
+  fi
+  assert_equals "$settings_before" "$(set_proxy)" "rejected settings preserve the configured address"
+  help_output=$(show_help)
+  case "$help_output" in
+    *--system*) echo "FAIL: help should omit the removed system setting" >&2; exit 1 ;;
+  esac
+
   status_output=$(proxy_status)
   case "$status_output" in
-    *"Current status: ACTIVE (system mode)"*) ;;
-    *) echo "FAIL: status should report the selected system mode" >&2; exit 1 ;;
+    *"INACTIVE (current shell)"*) ;;
+    *) echo "FAIL: status should report an inactive shell" >&2; exit 1 ;;
   esac
   start_proxy >/dev/null
-  set_proxy --address 127.0.0.1:9000 >/dev/null
-  assert_equals 9000 "${settings[org.gnome.system.proxy.http:port]}" "pset address applies in system mode"
-  if set_proxy --address user:password@127.0.0.1:7000 >/dev/null 2>&1; then
-    echo "FAIL: invalid system address should be rejected by pset" >&2
-    exit 1
-  fi
-  assert_equals "http://127.0.0.1:9000" "$PROXY_ADDRESS" "invalid system address keeps the previous configured address"
+  assert_equals "http://127.0.0.1:7890" "$(printenv http_proxy)" "CLI children inherit the current shell proxy"
+  assert_equals "socks5://127.0.0.1:7890" "$(printenv all_proxy)" "CLI children inherit the SOCKS proxy"
+  status_output=$(proxy_status)
+  case "$status_output" in
+    *"ACTIVE (current shell)"*) ;;
+    *) echo "FAIL: status should report an active shell" >&2; exit 1 ;;
+  esac
+  child_output=$(env -u http_proxy -u HTTP_PROXY -u https_proxy -u HTTPS_PROXY -u all_proxy -u ALL_PROXY \
+    bash --noprofile --norc -c 'source "$1/src/proxy-setup.sh" >/dev/null; printf "%s|%s" "${http_proxy-unset}" "${PROXYCLI_ENV_SAVED:-0}"' _ "$repo_root")
+  assert_equals 'unset|0' "$child_output" "independent shells do not automatically enable a proxy"
+  toggle_proxy >/dev/null
+  [ -z "${http_proxy+x}" ] || { echo "FAIL: toggle should restore an unset shell proxy" >&2; exit 1; }
+  toggle_proxy >/dev/null
+  assert_equals "http://127.0.0.1:7890" "$http_proxy" "toggle restarts the configured proxy"
   stop_proxy >/dev/null
-  assert_equals "'auto'" "${settings[org.gnome.system.proxy:mode]}" "global stop restores prior mode"
-  assert_equals "'previous'" "${settings[org.gnome.system.proxy.http:host]}" "global stop restores prior host"
-  [ ! -e "$temp_state/proxycli/system-proxy" ] || { echo "FAIL: restored system state should be removed" >&2; exit 1; }
-
-  PROXY_ADDRESS=http://user:password@127.0.0.1:7890
-  if start_proxy >/dev/null 2>&1; then
-    echo "FAIL: global start should reject unsupported credentials" >&2
-    exit 1
-  fi
-  [ ! -e "$temp_state/proxycli/system-proxy" ] || { echo "FAIL: invalid global address should not save state" >&2; exit 1; }
-  set_proxy --system off >/dev/null
-  [ ! -e "$temp_state/proxycli/system-mode" ] || { echo "FAIL: system mode should be disabled" >&2; exit 1; }
-  if start_proxy --global >/dev/null 2>&1 || stop_proxy --global >/dev/null 2>&1; then
-    echo "FAIL: scope flags should be rejected after moving mode selection to pset" >&2
-    exit 1
-  fi
-  if set_proxy --global on >/dev/null 2>&1; then
-    echo "FAIL: unsupported pset options should not become proxy addresses" >&2
-    exit 1
-  fi
-)
-
-test_macos_system_proxy() (
-  local temp_state kind
-  declare -A mock_enabled=() mock_server=() mock_port=()
-
-  temp_state=$(mktemp -d)
-  trap 'rm -rf "$temp_state"' EXIT
-  XDG_STATE_HOME="$temp_state"
-  uname() { printf '%s\n' Darwin; }
-  networksetup() {
-    local action="$1" kind
-    case "$action" in
-      -listallnetworkservices) printf '%s\n' 'An asterisk denotes a disabled service.' 'Wi-Fi' '*Disabled' ;;
-      -get*proxy)
-        kind="${action#-get}"
-        kind="${kind%proxy}"
-        printf 'Enabled: %s\nServer: %s\nPort: %s\nAuthenticated Proxy: 0\n' \
-          "${mock_enabled[$kind]}" "${mock_server[$kind]}" "${mock_port[$kind]}"
-        ;;
-      -set*proxystate)
-        kind="${action#-set}"
-        kind="${kind%proxystate}"
-        [ "$2" = 'Wi-Fi' ] || return 1
-        case "$3" in on) mock_enabled[$kind]=Yes ;; off) mock_enabled[$kind]=No ;; *) return 1 ;; esac
-        ;;
-      -set*proxy)
-        kind="${action#-set}"
-        kind="${kind%proxy}"
-        [ "$2" = 'Wi-Fi' ] || return 1
-        mock_server[$kind]="$3"
-        mock_port[$kind]="$4"
-        ;;
-      *) return 1 ;;
-    esac
-  }
-
-  for kind in web secureweb socksfirewall; do
-    mock_enabled[$kind]=No
-    mock_server[$kind]=previous.example
-    mock_port[$kind]=3128
-  done
-  source "$repo_root/src/proxy-setup.sh" >/dev/null
-  PROXYCLI_MANUAL_PROXY=1
-  PROXY_ADDRESS=http://127.0.0.1:7890
-  SOCKS_ADDRESS=socks5://127.0.0.1:1080
-  set_proxy --system on >/dev/null
-  start_proxy >/dev/null
-  assert_equals Yes "${mock_enabled[web]}" "macOS HTTP proxy is enabled"
-  assert_equals 7890 "${mock_port[secureweb]}" "macOS HTTPS proxy uses the HTTP endpoint"
-  assert_equals 1080 "${mock_port[socksfirewall]}" "macOS SOCKS proxy uses the SOCKS endpoint"
-  set_proxy --system off >/dev/null
-  assert_equals No "${mock_enabled[web]}" "macOS previous enabled state is restored"
-  assert_equals previous.example "${mock_server[web]}" "macOS previous server is restored"
 )
 
 test_installer_configuration() {
-  local temp_home config_file install_output marker_count
+  local temp_home config_file login_config install_output marker_count login_output
 
   temp_home=$(mktemp -d)
   config_file="$temp_home/.bashrc"
+  login_config="$temp_home/.profile"
+  printf '%s\n' ': keep-login' > "$login_config"
   printf '%s\n' \
     'keep-before' \
     '# Proxy Manager Configuration' \
@@ -457,6 +455,7 @@ test_installer_configuration() {
     # shellcheck source=/dev/null
     source "$repo_root/install.sh" >/dev/null
     assert_equals "baixiaoshengofficial/ProxyCli" "$REPO_SLUG" "installer uses the current GitHub repository"
+    assert_equals "$login_config" "$(find_bash_login_config)" "Bash SSH login uses the existing profile"
 
     configure_shell "$config_file"
     configure_shell "$config_file"
@@ -491,12 +490,49 @@ test_installer_configuration() {
       echo "FAIL: reinstall should overwrite the old runtime" >&2
       exit 1
     }
+    assert_equals "1" "$(grep -cF "$MARKER_BEGIN" "$login_config")" "installer configures the Bash login profile"
+    assert_equals "1" "$(grep -cF "$MARKER_BEGIN" "$config_file")" "reinstall keeps one Bash rc block"
+
+    login_output=$(env -i HOME="$temp_home" SHELL=/bin/bash PATH="$PATH" \
+      bash --login -c 'alias pstart >/dev/null && printf "PROXYCLI_LOGIN_LOADED|%s" "${PROXYCLI_ENV_SAVED:-0}"')
+    case "$login_output" in
+      *"PROXYCLI_LOGIN_LOADED|0"*) ;;
+      *) echo "FAIL: SSH-style Bash login should load commands without enabling a proxy" >&2; exit 1 ;;
+    esac
+
+    _PROXYCLI_RUNTIME_LOADED=1
+    source "$login_config"
+    assert_equals "1" "$_PROXYCLI_RUNTIME_LOADED" "login profile respects the runtime guard"
 
     remove_config_block "$config_file"
     assert_equals $'keep-before\nkeep-after' "$(cat "$config_file")" "installer removes only its configuration"
+    uninstall_proxycli >/dev/null
+    assert_equals ': keep-login' "$(cat "$login_config")" "uninstall removes the login profile block"
   )
   rm -rf "$temp_home"
 }
+
+test_installer_literal_paths() (
+  local temp_root temp_home config_file output runtime_help
+  temp_root=$(mktemp -d)
+  trap 'rm -rf "$temp_root"' EXIT
+  temp_home="$temp_root/home 'quoted' \$literal \`literal\`"
+  mkdir -p "$temp_home"
+  HOME="$temp_home"
+  SHELL=/bin/bash
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  runtime_help=$(show_help)
+  set -- help
+  source "$repo_root/install.sh" >/dev/null
+  assert_equals "$runtime_help" "$(show_help)" "installer help does not overwrite runtime help"
+  mkdir -p "${INSTALL_DIR}/src"
+  cp "$repo_root/src/proxy-setup.sh" "$SOURCE_FILE"
+  config_file="$temp_home/.bashrc"
+  configure_shell "$config_file"
+  output=$(env -i HOME="$temp_home" PATH="$PATH" bash --noprofile --norc -c \
+    '. "$1"; alias pstart >/dev/null; printf "%s" "$_PROXYCLI_RUNTIME_LOADED"' _ "$config_file")
+  assert_equals '1' "$output" "startup loads a literal path containing shell characters"
+)
 
 bash -n "$repo_root/install.sh"
 bash -n "$repo_root/src/proxy-setup.sh"
@@ -515,8 +551,11 @@ test_socks_only_detection
 test_lsof_process_priority
 test_listener_tool_fallback
 test_status_uses_full_proxy_url
-test_system_proxy_modes
-test_macos_system_proxy
+test_http_only_and_failed_scan
+test_existing_environment_restart
+test_validation_and_reload
+test_shell_scope_and_help
 test_installer_configuration
+test_installer_literal_paths
 
 echo "ProxyCli shell tests passed."

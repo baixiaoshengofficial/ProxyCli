@@ -60,18 +60,23 @@ detect_shell() {
 find_shell_config() {
   case "$1" in
     bash)
-      if [ -f "${HOME}/.bashrc" ]; then
-        printf '%s\n' "${HOME}/.bashrc"
-      elif [ -f "${HOME}/.bash_profile" ]; then
-        printf '%s\n' "${HOME}/.bash_profile"
-      else
-        printf '%s\n' "${HOME}/.bashrc"
-      fi
+      printf '%s\n' "${HOME}/.bashrc"
       ;;
     zsh)
       printf '%s\n' "${HOME}/.zshrc"
       ;;
   esac
+}
+
+find_bash_login_config() {
+  local config_file
+  for config_file in "${HOME}/.bash_profile" "${HOME}/.bash_login" "${HOME}/.profile"; do
+    if [ -f "$config_file" ]; then
+      printf '%s\n' "$config_file"
+      return 0
+    fi
+  done
+  printf '%s\n' "${HOME}/.bash_profile"
 }
 
 remove_config_block() {
@@ -93,19 +98,25 @@ remove_config_block() {
 }
 
 configure_shell() {
-  local config_file=$1
+  local config_file=$1 quoted_source
+  quoted_source=$(quote_shell_path "$SOURCE_FILE")
 
   [ -e "$config_file" ] || : > "$config_file" || return 1
   remove_config_block "$config_file" || return 1
   {
     printf '\n%s\n' "$MARKER_BEGIN"
-    printf '[ -f "%s" ] && . "%s"\n' "$SOURCE_FILE" "$SOURCE_FILE"
+    printf '[ "${_PROXYCLI_RUNTIME_LOADED:-0}" = "1" ] || { [ -f %s ] && . %s; }\n' "$quoted_source" "$quoted_source"
     printf '%s\n' "$MARKER_END"
   } >> "$config_file"
 }
 
+quote_shell_path() {
+  # Single quotes keep paths literal in both Bash and Zsh startup files.
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
 install_proxycli() {
-  local action="Installed" shell_type config_file temp_file
+  local action="Installed" shell_type config_file login_config temp_file
 
   command -v curl >/dev/null 2>&1 || {
     print_error "curl is required to install ${PROJECT_NAME}."
@@ -145,16 +156,23 @@ install_proxycli() {
     print_error "Installed the runtime but could not update ${config_file}."
     return 1
   }
+  if [ "$shell_type" = bash ]; then
+    login_config=$(find_bash_login_config)
+    configure_shell "$login_config" || {
+      print_error "Installed the runtime but could not update ${login_config}."
+      return 1
+    }
+  fi
 
   print_success "${action} runtime: ${SOURCE_FILE}"
   print_success "Load this version in the current shell:"
-  printf '  . "%s"\n' "$SOURCE_FILE"
+  printf '  . %s\n' "$(quote_shell_path "$SOURCE_FILE")"
 }
 
 uninstall_proxycli() {
   local config_file
 
-  for config_file in "${HOME}/.bashrc" "${HOME}/.bash_profile" "${HOME}/.zshrc"; do
+  for config_file in "${HOME}/.bashrc" "${HOME}/.bash_profile" "${HOME}/.bash_login" "${HOME}/.profile" "${HOME}/.zshrc"; do
     [ -f "$config_file" ] || continue
     remove_config_block "$config_file" || {
       print_error "Could not remove configuration from ${config_file}."
@@ -162,12 +180,15 @@ uninstall_proxycli() {
     }
   done
 
-  rm -rf "$INSTALL_DIR" "$LEGACY_INSTALL_DIR"
+  rm -rf "$INSTALL_DIR" "$LEGACY_INSTALL_DIR" || {
+    print_error "Could not remove runtime files."
+    return 1
+  }
   print_success "Removed ProxyCli configuration and runtime files."
   print_success "Restart the shell to remove commands from the current session."
 }
 
-show_help() {
+show_installer_help() {
   cat <<EOF
 ${PROJECT_NAME} installer
 
@@ -187,11 +208,11 @@ case "${1:-install}" in
     uninstall_proxycli
     ;;
   help|--help|-h)
-    show_help
+    show_installer_help
     ;;
   *)
     print_error "Unknown option: $1"
-    show_help >&2
+    show_installer_help >&2
     exit 2
     ;;
 esac

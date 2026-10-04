@@ -1,16 +1,14 @@
 中文 [English](README.md)
 # 代理管理脚本
 
-一个轻量级、功能强大的代理管理脚本，适用于 Bash 和 Zsh，一键配置 http_proxy,https_proxy,socks5_proxy,all_proxy. 带有一个 cli 快捷切换.
+适用于 Bash 和 Zsh 的轻量级代理管理脚本，通过命令管理当前 shell 的 HTTP 和 SOCKS5 代理环境变量。
 
 ## 功能
 
-- 🚀 一键启动/停止/切换代理设置  
+- 🚀 一键启动、停止或切换当前 shell 的代理变量
 - 🔍 从本地监听端口自动识别 HTTP 和 SOCKS5 代理
-- 📊 显示详细的代理状态信息  
-- 🌐 测试互联网和代理连接  
-- ⚙️ 支持设置自定义代理地址  
-- 🔄 一键切换代理状态  
+- 📊 查看代理变量并检查连接
+- ⚙️ 通过 `pset` 统一设置代理地址和扫描端口
 
 ## 安装方法
 
@@ -20,7 +18,7 @@
 bash <(curl -sSL baixiaosheng.de/proxycli) && source "$HOME/.proxycli/src/proxy-setup.sh"
 ```
 
-其中 `source` 用于将安装或更新后的命令立即加载到当前 shell。省略该步骤时，已经打开的终端会继续使用之前加载的函数，直到重新启动终端。
+安装脚本会配置 Bash 的普通终端与 SSH 登录配置文件，或 Zsh 的启动文件。`source` 用于将安装或更新后的命令立即加载到当前 shell；新终端会自动加载。
 
 GitHub Raw 备用方式：
 
@@ -47,34 +45,42 @@ bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
    bash install.sh
    ```
 
-3. 重新加载您的 shell:
+3. 将命令加载到当前 shell:
    ```bash
-   source ~/.zshrc  # 或 source ~/.bashrc
+   source "$HOME/.proxycli/src/proxy-setup.sh"
    ```
 
 ## 使用方法
 
 | 命令       | 描述             | 示例                |
 |------------|------------------|---------------------|
-| `pstart`   | 在所选模式中启用代理 | `pstart`            |
-| `pscan` | 强制重新识别并启用代理 | `pscan` |
-| `pstop`    | 恢复所选模式原有的代理设置 | `pstop`             |
-| `ptoggle`  | 切换代理状态     | `ptoggle`           |
-| `pstatus`  | 显示代理状态     | `pstatus`           |
+| `pstart`   | 启用当前 shell 的代理变量 | `pstart`            |
+| `pscan` | 扫描本地代理并启用结果 | `pscan` |
+| `pstop`    | 恢复当前 shell 原有代理环境 | `pstop`             |
+| `ptoggle`  | 启动或停止 ProxyCli | `ptoggle`           |
+| `pstatus`  | 查看 shell 代理变量并检查连接 | `pstatus`           |
 | `pset`     | 查看当前设置 | `pset` |
-| `pset --address host:port` | 设置自定义 HTTP/SOCKS 代理地址 | `pset --address localhost:7890` |
+| `pset --address host:port` | 设置 HTTP/SOCKS5 共用地址 | `pset --address localhost:7890` |
+| `pset --address HTTP SOCKS` | 分别设置 HTTP 和 SOCKS5 地址 | `pset --address localhost:7890 localhost:1080` |
 | `pset --address auto` | 恢复自动识别 | `pset --address auto` |
-| `pset --system on\|off` | 选择系统代理或当前 shell 模式 | `pset --system on` |
-| `pset --ports` | 查看或修改扫描端口 | `pset --ports 7890 1080 8080` |
+| `pset --ports` | 查看扫描端口 | `pset --ports` |
+| `pset --ports port ...` | 替换扫描端口 | `pset --ports 7890 1080 8080` |
+| `pset --ports --reset` | 恢复默认扫描端口 | `pset --ports --reset` |
 | `phelp`    | 显示帮助信息     | `phelp`             |
 
 ## 代理识别
 
-`pstart` 是被动模式：它会显示并检查每个缓存端点是否仍在监听，有效时直接复用；缓存或默认端口无效时才自动重新扫描。`pscan` 是主动模式：每次都会强制重新识别并启用结果。扫描进度会显示候选端口、当前端口、待验证协议和识别结果；扫描顺序依次为常见代理进程端口、配置的候选端口以及其他本地监听端口。完整连通性检查请单独执行 `pstatus`。
+`pstart` 使用手动设置的地址、仍在监听的本地代理缓存，或已有的代理环境变量；没有可复用的代理时才自动扫描。`pscan` 每次都会重新扫描本地代理并启用结果；扫描成功后，地址设置切换为自动识别。
 
-默认模式只修改当前 shell 及其子进程的代理变量。执行 `pset --system on` 会恢复本 shell 中由 ProxyCli 设置的代理变量；此后 `pstart`、`pscan`、`pset --address host:port`、`pstop` 和 `ptoggle` 都操作桌面系统代理。执行 `pset --system off` 会恢复原有系统设置，并切回当前 shell 模式。所选模式保存在 `${XDG_STATE_HOME:-$HOME/.local/state}/proxycli/system-mode`，因此在新 shell 中也有效；同目录还保存原有系统设置，以便恢复。执行 `pset` 可查看当前模式、本 shell 配置的地址和扫描端口。
+扫描顺序为缓存端口、常见代理进程端口、配置的候选端口、其他本地监听端口。进度会显示候选列表、当前端口、协议和结果。扫描失败时保留原有地址和 shell 环境。
 
-系统模式支持 macOS 的网络服务和 Linux 的 GNOME 桌面；不支持其他桌面、WSL 或带凭据的代理地址。`pset --address host:port` 会为 `pstart` 保存地址；如果所选模式已启用，则更新当前代理。
+`pstart` 成功表示代理变量已设置。执行 `pstatus` 可检查到 `PROXYCLI_TEST_URL` 的连接（默认 `https://example.com/`）。它检测当前 shell 的实际变量，也会显示外部设置的代理。`ACTIVE` / `INACTIVE` 表示 ProxyCli 是否正在管理当前 shell，连接是否可用会单独显示。
+
+`pstart` 和 `pscan` 会在当前 shell 中导出 `http_proxy`、`https_proxy`、`all_proxy` 及其大写变量。从该 shell 启动的程序会继承这些变量，支持代理环境变量的程序可据此使用代理。`pstop` 恢复当前 shell 原有的环境。其他终端、已经运行的程序和独立启动的服务保留各自的环境。
+
+加载运行脚本只会提供命令，不会自动启用代理。地址和扫描端口设置适用于当前 shell 会话，重新加载脚本时会保留。`pset --address host:port` 为 `pstart` 设置地址；如果 ProxyCli 已启动，则立即更新代理变量。已启动时执行 `pset --address auto` 会立即重新扫描。执行 `pset` 可查看设置。
+
+地址必须包含主机和端口，端口范围为 `1–65535`。IPv6 主机需要方括号，例如 `'[::1]:7890'`。HTTP 地址可带 `http://` 或 `https://`；单独指定的 SOCKS 地址可带 `socks5://` 或 `socks5h://`。命令输出会隐藏代理认证信息。
 
 默认候选端口为 `7890 7891 7892 7893 7897 8888 8080`。需要时可在当前 shell 中修改：
 
