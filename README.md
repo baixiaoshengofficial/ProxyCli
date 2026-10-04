@@ -53,27 +53,51 @@ bash <(curl -sSL baixiaosheng.de/proxycli) --uninstall
    source "$HOME/.proxycli/src/proxy-setup.sh"
    ```
 
-## Usage 
+## Usage
 
-| Command  | Description| Example |
-|----------------|-------------------|---------------|
-| `pstart`       | Enable proxy variables in this shell | `pstart` |
-| `pscan`        | Scan local proxies and enable the result | `pscan` |
-| `pstop`        | Restore this shell's previous proxy environment | `pstop` |
-| `ptoggle`      | Start or stop ProxyCli | `ptoggle` |
-| `pstatus`      | Show shell proxy variables and test connectivity | `pstatus` |
-| `pset`         | Show current settings | `pset` |
-| `pset --address host:port` | Set a shared HTTP/SOCKS5 endpoint | `pset --address localhost:7890` |
-| `pset --address HTTP SOCKS` | Set HTTP and SOCKS5 endpoints separately | `pset --address localhost:7890 localhost:1080` |
-| `pset --address auto` | Return to automatic detection | `pset --address auto` |
-| `pset --ports` | Show scan ports | `pset --ports` |
-| `pset --ports port ...` | Replace scan ports | `pset --ports 7890 1080 8080` |
-| `pset --ports --reset` | Restore default scan ports | `pset --ports --reset` |
-| `phelp`        | Show help | `phelp` |
+| Command | Description |
+|---------|-------------|
+| `pstart` | Enable proxy variables in this shell |
+| `pscan` | Scan local proxies and enable the result |
+| `pstop` | Restore this shell's previous proxy environment |
+| `ptoggle` | Start or stop ProxyCli |
+| `pstatus` | Show shell proxy variables and test connectivity |
+| `pset` | Show current settings |
+| `phelp` | Show help |
+
+## Settings
+
+`pset` saves settings for the current shell session. Run `pstart` to apply them. An active proxy keeps its current environment until you apply the new settings.
+
+### Proxy address
+
+```bash
+pset --address 127.0.0.1:7890  # Set proxy address
+pset --address auto            # Use automatic detection
+```
+
+Run `pset --address` to show the address setting.
+
+Replace the host and port as needed. One address is used for both HTTP and SOCKS5. If they use separate addresses, put HTTP first and SOCKS5 second:
+
+```bash
+pset --address 127.0.0.1:7890 127.0.0.1:1080
+```
+
+Addresses require a host and a port from `1` to `65535`. Use brackets around IPv6 hosts, for example `'[::1]:7890'`. HTTP addresses accept `http://` or `https://`; a separate SOCKS address accepts `socks5://` or `socks5h://`. Proxy credentials are hidden in command output.
+
+### Scan ports
+
+```bash
+pset --ports 7890 1080  # Set scan ports
+pset --ports auto      # Restore default ports
+```
+
+Run `pset --ports` to show scan ports, or `pset` to show all settings. The defaults are `7890 7891 7892 7893 7897 8888 8080`.
 
 ## Proxy Detection
 
-`pstart` uses a manually configured address, a cached local proxy whose ports are still listening, or existing proxy environment variables. It scans when no reusable proxy is available. `pscan` always performs a fresh local scan and enables the result; a successful scan switches the address setting to automatic detection.
+`pstart` applies pending settings first: a manual address is used directly; automatic mode runs a new scan. With no pending settings, it reuses a cached local proxy whose ports are still listening or existing proxy environment variables, and scans when needed. `pscan` always performs a fresh local scan and enables the result; a successful scan switches the address setting to automatic detection.
 
 Scans try cached ports first, followed by common proxy process ports, configured ports, and other local listeners. Progress shows the candidates, current port, protocols, and results. A failed scan keeps the previous address and shell environment.
 
@@ -81,17 +105,7 @@ Scans try cached ports first, followed by common proxy process ports, configured
 
 `pstart` and `pscan` export `http_proxy`, `https_proxy`, `all_proxy`, and their uppercase variants in the current shell. Programs launched from that shell inherit these variables and can use them if they support proxy environment variables. `pstop` restores the previous shell environment. Other terminals, already running programs, and independently launched services keep their own environment.
 
-Sourcing the runtime loads the commands; it does not automatically enable a proxy. Address and scan-port settings apply to the current shell session and survive reloading the runtime. `pset --address host:port` sets the address for `pstart`; if ProxyCli is active, it updates the proxy variables immediately. `pset --address auto` rescans immediately when active. Run `pset` to view the settings.
-
-Addresses require a host and a port from `1` to `65535`. Use brackets around IPv6 hosts, for example `'[::1]:7890'`. HTTP addresses accept `http://` or `https://`; a separate SOCKS address accepts `socks5://` or `socks5h://`. Proxy credentials are hidden in command output.
-
-The defaults are `7890 7891 7892 7893 7897 8888 8080`. Change them for the current shell when needed:
-
-```bash
-pset --ports 7890 1080 8080
-```
-
-Run `pset --ports` to show the current list or `pset --ports --reset` to restore the defaults. Use `pset --address host:port` to bypass detection, or `pset --address auto` to return to automatic mode.
+Sourcing the runtime loads the commands; it does not automatically enable a proxy. Settings and pending changes survive reloading the runtime in the same shell session. `pstatus` shows the active environment and a reminder when settings are pending. A failed application keeps the active environment and leaves the new settings pending for another attempt. Run `pset` to view the configured settings.
 
 ## Uninstallation 
 

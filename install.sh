@@ -104,7 +104,7 @@ configure_shell() {
   [ -e "$config_file" ] || : > "$config_file" || return 1
   remove_config_block "$config_file" || return 1
   {
-    printf '\n%s\n' "$MARKER_BEGIN"
+    printf '%s\n' "$MARKER_BEGIN"
     printf '[ "${_PROXYCLI_RUNTIME_LOADED:-0}" = "1" ] || { [ -f %s ] && . %s; }\n' "$quoted_source" "$quoted_source"
     printf '%s\n' "$MARKER_END"
   } >> "$config_file"

@@ -52,7 +52,11 @@ test_runtime() (
   }
   set_proxy --address auto >/dev/null 2>&1
   assert_equals "0" "$PROXYCLI_MANUAL_PROXY" "automatic detection is restored"
+  assert_equals "http://127.0.0.1:7890" "$http_proxy" "auto setting preserves the active shell proxy"
+  assert_equals "1" "$_PROXYCLI_SETTINGS_PENDING" "auto address change waits for application"
+  start_proxy >/dev/null
   assert_equals "http://127.0.0.1:9000" "$http_proxy" "auto mode refreshes the detected HTTP proxy"
+  assert_equals "0" "$_PROXYCLI_SETTINGS_PENDING" "start applies pending settings"
   stop_proxy >/dev/null
 
   set_proxy --address auto >/dev/null
@@ -182,7 +186,7 @@ test_detection_order() (
 
   detect_proxy >/dev/null 2>&1
   assert_equals "http://127.0.0.1:7001" "$PROXY_ADDRESS" "HTTP proxy process port is selected"
-  assert_equals "socks5://127.0.0.1:9002" "$SOCKS_ADDRESS" "SOCKS protocol is detected independently"
+  assert_equals "socks5h://127.0.0.1:9002" "$SOCKS_ADDRESS" "SOCKS protocol is detected independently"
   assert_equals "7001" "$PROXYCLI_LAST_HTTP_PORT" "successful HTTP port is cached"
 
   assert_equals \
@@ -210,28 +214,45 @@ test_scan_port_configuration() (
   fi
   assert_equals "9001 1080" "$_PROXYCLI_SCAN_PORTS" "invalid input does not change scan ports"
 
+  if set_proxy --ports --reset >/dev/null 2>&1 ||
+     set_proxy --ports auto 7890 >/dev/null 2>&1 ||
+     set_proxy --ports 7890 auto >/dev/null 2>&1; then
+    echo "FAIL: old reset syntax and mixed auto/port arguments should be rejected" >&2
+    exit 1
+  fi
+  assert_equals "9001 1080" "$_PROXYCLI_SCAN_PORTS" "rejected auto arguments do not change scan ports"
+
   PROXYCLI_LAST_HTTP_PORT=9001
+  PROXYCLI_LAST_SOCKS_PORT=1080
   _PROXYCLI_AUTO_READY=1
-  set_proxy --ports --reset >/dev/null
+  set_proxy --ports auto >/dev/null
   assert_equals "$_PROXYCLI_DEFAULT_PORTS" "$_PROXYCLI_SCAN_PORTS" "default scan ports are restored"
   [ -z "${PROXYCLI_LAST_HTTP_PORT+x}" ] || {
     echo "FAIL: changing scan ports should clear cached results" >&2
     exit 1
   }
   assert_equals "0" "$_PROXYCLI_AUTO_READY" "changing scan ports invalidates the detected proxy"
+  [ -z "${PROXYCLI_LAST_SOCKS_PORT+x}" ] || {
+    echo "FAIL: restoring scan ports should clear cached SOCKS results" >&2
+    exit 1
+  }
+  set_proxy --ports auto >/dev/null
+  assert_equals "$_PROXYCLI_DEFAULT_PORTS" "$_PROXYCLI_SCAN_PORTS" "repeated auto restores are harmless"
 )
 
 test_socks_only_detection() (
+  local tested_socks_url=""
   # shellcheck source=/dev/null
   source "$repo_root/src/proxy-setup.sh" >/dev/null
 
   _proxycli_candidate_ports() { printf '%s\n' 1080; }
   _proxycli_probe_http_url() { return 1; }
-  _proxycli_probe_socks_url() { return 0; }
+  _proxycli_probe_socks_url() { tested_socks_url=$1; return 0; }
 
   detect_proxy >/dev/null 2>&1
   assert_equals "" "$PROXY_ADDRESS" "SOCKS-only detection leaves HTTP unset"
-  assert_equals "socks5://127.0.0.1:1080" "$SOCKS_ADDRESS" "SOCKS-only proxy is accepted"
+  assert_equals "socks5h://127.0.0.1:1080" "$SOCKS_ADDRESS" "SOCKS-only proxy is accepted"
+  assert_equals "$tested_socks_url" "$SOCKS_ADDRESS" "detection keeps the verified SOCKS URL"
 
   curl() { return 0; }
   unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY
@@ -242,6 +263,9 @@ test_socks_only_detection() (
     exit 1
   }
   assert_equals "$SOCKS_ADDRESS" "$all_proxy" "SOCKS-only mode exports all_proxy"
+  assert_equals "$tested_socks_url" "$all_proxy" "start exports the verified SOCKS URL"
+  proxy_status >/dev/null
+  assert_equals "$all_proxy" "$tested_socks_url" "status checks the same SOCKS URL as detection and activation"
   stop_proxy >/dev/null
 )
 
@@ -394,6 +418,113 @@ test_validation_and_reload() (
   assert_equals '' "$output" "noninteractive loading does not print a banner"
 )
 
+test_settings_queries_and_application() (
+  local settings_before address_before ports_before detected_calls=0 status_output no_proxy_before
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  curl() { return 0; }
+  detect_proxy() {
+    detected_calls=$((detected_calls + 1))
+    PROXY_ADDRESS="http://127.0.0.1:${_PROXYCLI_SCAN_PORTS%% *}"
+    SOCKS_ADDRESS="socks5h://127.0.0.1:${_PROXYCLI_SCAN_PORTS%% *}"
+    _PROXYCLI_AUTO_READY=1
+  }
+  _proxycli_cached_proxy_available() { return 0; }
+
+  set_proxy --address auto >/dev/null
+  assert_equals '0' "$detected_calls" "selecting auto does not detect or activate"
+  assert_equals '  Address: automatic detection' "$(set_proxy --address)" "address without a value shows auto setting"
+  assert_equals '1' "$_PROXYCLI_SETTINGS_PENDING" "querying an address preserves pending settings"
+  set_proxy --address 'http://user:secret@localhost:7890' 'socks5h://localhost:1080' >/dev/null
+  address_before=$(set_proxy --address)
+  assert_equals $'  HTTP:  http://***@localhost:7890\n  SOCKS: socks5h://localhost:1080' "$address_before" "address query hides credentials and shows both settings"
+  [ -z "${http_proxy+x}" ] && [ -z "${PROXYCLI_ENV_SAVED+x}" ] || {
+    echo 'FAIL: setting or querying must not enable the shell proxy' >&2
+    exit 1
+  }
+  start_proxy >/dev/null
+  no_proxy_before=$no_proxy
+  set_proxy --address localhost:9000 >/dev/null
+  assert_equals 'http://user:secret@localhost:7890' "$http_proxy" "manual address changes leave an active environment untouched"
+  assert_equals '' "$PROXYCLI_SAVED_http_proxy" "setting an address preserves the original backup"
+  assert_equals '0' "$detected_calls" "manual settings do not trigger detection"
+  start_proxy >/dev/null
+  assert_equals 'http://localhost:9000' "$http_proxy" "start applies the new manual address"
+  assert_equals "$no_proxy_before" "$no_proxy" "applying new settings does not duplicate no_proxy entries"
+  stop_proxy >/dev/null
+  [ -z "${http_proxy+x}" ] || { echo 'FAIL: stopping restores the original unset environment' >&2; exit 1; }
+
+  export HTTPS_PROXY='http://external.example:3128'
+  set_proxy --address auto >/dev/null
+  start_proxy >/dev/null 2>&1
+  assert_equals '1' "$detected_calls" "an explicit auto setting scans instead of reusing external variables"
+  assert_equals 'http://127.0.0.1:7890' "$http_proxy" "auto settings select a detected proxy"
+  set_proxy --ports 9001 1080 >/dev/null
+  assert_equals '1' "$detected_calls" "changing scan ports does not trigger detection"
+  assert_equals 'http://127.0.0.1:7890' "$http_proxy" "changing scan ports preserves the active environment"
+  settings_before=$(set_proxy)
+  address_before=$(set_proxy --address)
+  ports_before=$(set_proxy --ports)
+  assert_equals "$settings_before" "$(set_proxy)" "settings queries do not change configuration"
+  assert_equals '  Address: automatic detection' "$address_before" "address query shows the chosen mode"
+  assert_equals '[ProxyCli] Scan ports: 9001 1080' "$ports_before" "ports query shows the configured candidates"
+  assert_equals '1' "$_PROXYCLI_SETTINGS_PENDING" "queries keep pending settings intact"
+  status_output=$(proxy_status)
+  case "$status_output" in
+    *'http://127.0.0.1:7890'*'Settings pending; run pstart to apply.'*) ;;
+    *) echo 'FAIL: status should show the active proxy and the pending settings hint' >&2; exit 1 ;;
+  esac
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  assert_equals '1' "$_PROXYCLI_SETTINGS_PENDING" "reload preserves pending settings"
+  # Reload replaced the mocks, so restore them before applying settings.
+  detect_proxy() {
+    detected_calls=$((detected_calls + 1))
+    PROXY_ADDRESS="http://127.0.0.1:${_PROXYCLI_SCAN_PORTS%% *}"
+    SOCKS_ADDRESS="socks5h://127.0.0.1:${_PROXYCLI_SCAN_PORTS%% *}"
+    _PROXYCLI_AUTO_READY=1
+  }
+  start_proxy >/dev/null
+  assert_equals '2' "$detected_calls" "start scans with changed ports instead of reusing the active environment"
+  assert_equals 'http://127.0.0.1:9001' "$http_proxy" "start applies the new scan result"
+  assert_equals '0' "$_PROXYCLI_SETTINGS_PENDING" "applying scan ports clears pending state"
+  assert_equals 'http://external.example:3128' "$PROXYCLI_SAVED_HTTPS_PROXY" "reconfiguration keeps the original external proxy backup"
+
+  set_proxy --ports auto >/dev/null
+  assert_equals 'http://127.0.0.1:9001' "$http_proxy" "restoring default ports also waits for application"
+  start_proxy >/dev/null
+  assert_equals '3' "$detected_calls" "start rescans after restoring default ports"
+  assert_equals 'http://127.0.0.1:7890' "$http_proxy" "default ports apply on start"
+
+  set_proxy --address auto >/dev/null
+  assert_equals '3' "$detected_calls" "selecting auto while active does not scan"
+  detect_proxy() { return 1; }
+  if start_proxy >/dev/null 2>&1; then
+    echo 'FAIL: failed application should return failure' >&2
+    exit 1
+  fi
+  assert_equals 'http://127.0.0.1:7890' "$http_proxy" "failed application preserves the active environment"
+  assert_equals '1' "$_PROXYCLI_SETTINGS_PENDING" "failed application keeps settings pending"
+  assert_equals '1' "$PROXYCLI_ENV_SAVED" "failed application keeps the original backup"
+  set_proxy --address localhost:9009 >/dev/null
+  start_proxy >/dev/null
+  assert_equals 'http://localhost:9009' "$http_proxy" "manual settings can recover from failed auto detection"
+
+  detect_proxy() {
+    detected_calls=$((detected_calls + 1))
+    PROXY_ADDRESS='http://127.0.0.1:7890'
+    SOCKS_ADDRESS='socks5h://127.0.0.1:7890'
+    _PROXYCLI_AUTO_READY=1
+  }
+  set_proxy --address localhost:9010 >/dev/null
+  scan_proxy >/dev/null 2>&1
+  assert_equals '0' "$PROXYCLI_MANUAL_PROXY" "scan explicitly switches the configured address to auto"
+  assert_equals '0' "$_PROXYCLI_SETTINGS_PENDING" "scan applies its result and clears pending settings"
+  assert_equals 'http://127.0.0.1:7890' "$http_proxy" "scan applies the detected proxy"
+  stop_proxy >/dev/null
+  assert_equals 'http://external.example:3128' "$HTTPS_PROXY" "stop restores the external environment after all setting changes"
+  [ -z "${http_proxy+x}" ] || { echo 'FAIL: stop should restore originally unset HTTP variables' >&2; exit 1; }
+)
+
 test_shell_scope_and_help() (
   local settings_before help_output child_output status_output
 
@@ -410,6 +541,13 @@ test_shell_scope_and_help() (
   help_output=$(show_help)
   case "$help_output" in
     *--system*) echo "FAIL: help should omit the removed system setting" >&2; exit 1 ;;
+  esac
+  case "$help_output" in
+    *"pset --address auto"*"pset --ports auto"*) ;;
+    *) echo "FAIL: help should use auto for both address and scan ports" >&2; exit 1 ;;
+  esac
+  case "$help_output" in
+    *--reset*) echo "FAIL: help should omit the old reset syntax" >&2; exit 1 ;;
   esac
 
   status_output=$(proxy_status)
@@ -458,7 +596,12 @@ test_installer_configuration() {
     assert_equals "$login_config" "$(find_bash_login_config)" "Bash SSH login uses the existing profile"
 
     configure_shell "$config_file"
+    cp "$config_file" "$temp_home/first-config"
     configure_shell "$config_file"
+    cmp -s "$temp_home/first-config" "$config_file" || {
+      echo 'FAIL: repeated configuration must leave the file identical' >&2
+      exit 1
+    }
     marker_count=$(grep -cF "$MARKER_BEGIN" "$config_file")
     assert_equals "1" "$marker_count" "installer writes one configuration block"
 
@@ -492,6 +635,10 @@ test_installer_configuration() {
     }
     assert_equals "1" "$(grep -cF "$MARKER_BEGIN" "$login_config")" "installer configures the Bash login profile"
     assert_equals "1" "$(grep -cF "$MARKER_BEGIN" "$config_file")" "reinstall keeps one Bash rc block"
+    cmp -s "$temp_home/first-config" "$config_file" || {
+      echo 'FAIL: reinstall must preserve the existing configuration exactly' >&2
+      exit 1
+    }
 
     login_output=$(env -i HOME="$temp_home" SHELL=/bin/bash PATH="$PATH" \
       bash --login -c 'alias pstart >/dev/null && printf "PROXYCLI_LOGIN_LOADED|%s" "${PROXYCLI_ENV_SAVED:-0}"')
@@ -534,6 +681,39 @@ test_installer_literal_paths() (
   assert_equals '1' "$output" "startup loads a literal path containing shell characters"
 )
 
+test_installer_idempotence() (
+  local temp_home fixture config_file
+  temp_home=$(mktemp -d)
+  trap 'rm -rf "$temp_home"' EXIT
+  HOME="$temp_home"
+  SHELL=/bin/bash
+  set -- help
+  source "$repo_root/install.sh" >/dev/null
+  config_file="$temp_home/.bashrc"
+  for fixture in '' ': no-final-newline' $': with-final-newline\n' $'\n: preserve-blank-lines\n\n\n'; do
+    printf '%s' "$fixture" > "$config_file"
+    configure_shell "$config_file"
+    cp "$config_file" "$temp_home/first-config"
+    configure_shell "$config_file"
+    configure_shell "$config_file"
+    cmp -s "$temp_home/first-config" "$config_file" || {
+      echo 'FAIL: configuration must be identical after repeated installations' >&2
+      exit 1
+    }
+    remove_config_block "$config_file"
+    if [ -n "$fixture" ]; then
+      case "$fixture" in
+        *$'\n') printf '%s' "$fixture" ;;
+        *) printf '%s\n' "$fixture" ;;
+      esac
+    fi > "$temp_home/expected-profile"
+    cmp -s "$temp_home/expected-profile" "$config_file" || {
+      echo 'FAIL: removing the configuration must preserve unrelated content and blank lines' >&2
+      exit 1
+    }
+  done
+)
+
 bash -n "$repo_root/install.sh"
 bash -n "$repo_root/src/proxy-setup.sh"
 SHELL=/bin/bash bash "$repo_root/install.sh" --help >/dev/null
@@ -554,8 +734,10 @@ test_status_uses_full_proxy_url
 test_http_only_and_failed_scan
 test_existing_environment_restart
 test_validation_and_reload
+test_settings_queries_and_application
 test_shell_scope_and_help
 test_installer_configuration
 test_installer_literal_paths
+test_installer_idempotence
 
 echo "ProxyCli shell tests passed."
