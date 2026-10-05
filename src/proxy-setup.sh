@@ -726,9 +726,11 @@ _PROXYCLI_RUNTIME_LOADED=1
 case "$-" in
   *i*)
     if _proxycli_proxy_active; then
-      _proxycli_heading '[ProxyCli] Active · status: pstatus · help: phelp'
+      _proxycli_heading '[ProxyCli] Proxy is enabled in this shell.'
+      printf '  Run pstatus to check connectivity, or phelp for help.\n'
     else
-      _proxycli_heading '[ProxyCli] Ready · start: pstart · help: phelp'
+      _proxycli_heading '[ProxyCli] Proxy commands loaded.'
+      printf '  Run pstart to enable the proxy, or phelp for help.\n'
     fi
     ;;
 esac

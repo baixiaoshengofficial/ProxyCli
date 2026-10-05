@@ -12,7 +12,7 @@ bash <(curl -fsSL baixiaosheng.de/proxycli) && source "$HOME/.proxycli/src/proxy
 
 需要 `curl`。安装脚本会配置 Bash 启动文件（包含 SSH 登录终端）或 Zsh 启动文件。`source` 将安装后的版本加载到当前 shell，新终端会自动加载。加载命令不会启动代理。
 
-加载提示中的 `Ready` 表示命令已就绪，`Active` 表示当前 shell 的 ProxyCli 代理已启用。支持的终端会显示彩色标题；设置 `NO_COLOR=1` 可关闭颜色，重定向输出保持纯文本。
+加载提示会说明代理命令已加载，并告诉你如何开启代理和查看帮助。当前 shell 的 ProxyCli 代理已启用时，会说明当前状态，并提示如何检查连接。支持的终端会显示彩色标题；设置 `NO_COLOR=1` 可关闭颜色，重定向输出保持纯文本。
 
 <details>
 <summary>GitHub 备用方式和手动安装</summary>

@@ -839,7 +839,7 @@ test_interactive_prompt() (
 set -eu
 unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 source "$1/src/proxy-setup.sh" >/dev/null
-assert_equals '[ProxyCli] Ready · start: pstart · help: phelp' "$(source "$1/src/proxy-setup.sh")" "interactive loading shows commands are ready"
+assert_equals $'[ProxyCli] Proxy commands loaded.\n  Run pstart to enable the proxy, or phelp for help.' "$(source "$1/src/proxy-setup.sh")" "interactive loading explains what loaded and how to start"
 [ -z "${PROXYCLI_ENV_SAVED+x}" ] || { echo 'FAIL: a ready notice must not enable the proxy' >&2; exit 1; }
 case "$(show_help)" in
   *$'\033'*) echo 'FAIL: captured interactive help should not contain color escapes' >&2; exit 1 ;;
@@ -878,7 +878,7 @@ set_proxy --address localhost:7890 >/dev/null
 assert_equals "$base_prompt" "$PS1" "saving settings does not add a prompt icon"
 start_proxy >/dev/null
 assert_equals "🚀 $base_prompt" "$PS1" "interactive start adds the rocket prefix"
-assert_equals '[ProxyCli] Active · status: pstatus · help: phelp' "$(source "$1/src/proxy-setup.sh")" "reload of an active shell reports its actual state"
+assert_equals $'[ProxyCli] Proxy is enabled in this shell.\n  Run pstatus to check connectivity, or phelp for help.' "$(source "$1/src/proxy-setup.sh")" "reload of an active shell reports its actual state"
 registered_hooks=$(typeset -p "$prompt_hook_variable")
 start_proxy >/dev/null
 source "$1/src/proxy-setup.sh" >/dev/null
