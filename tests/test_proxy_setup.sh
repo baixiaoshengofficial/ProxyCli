@@ -479,7 +479,7 @@ test_settings_queries_and_application() (
   ports_before=$(set_proxy --ports)
   assert_equals "$settings_before" "$(set_proxy)" "settings queries do not change configuration"
   assert_equals '  Address: automatic detection' "$address_before" "address query shows the chosen mode"
-  assert_equals '[ProxyCli] Scan ports: 9001 1080' "$ports_before" "ports query shows the configured candidates"
+  assert_equals '🚀 Scan ports: 9001 1080' "$ports_before" "ports query shows the configured candidates"
   assert_equals '1' "$_PROXYCLI_SETTINGS_PENDING" "queries keep pending settings intact"
   status_output=$(proxy_status)
   case "$status_output" in
@@ -765,11 +765,51 @@ test_noninteractive_prompt() (
   assert_equals 'original> ' "$PS1" "noninteractive stop leaves PS1 unchanged"
 )
 
+test_message_indicator() (
+  local temp_dir icon
+  temp_dir=$(mktemp -d)
+  trap 'rm -rf "$temp_dir"' EXIT
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+  source "$repo_root/src/proxy-setup.sh" >/dev/null
+  assert_equals '🚀 Test message' "$(_proxycli_log 'Test message')" "messages default to the rocket prefix"
+  for icon in 🌐 👩‍💻 '*️⃣'; do
+    set_proxy --indicator "$icon" >/dev/null
+    assert_equals "$icon Literal %s \\n *" "$(_proxycli_log 'Literal %s \n *')" "message formatting keeps icons and text literal"
+  done
+  assert_equals '🌐 Indicator saved: 🌐. Run pstart to apply.' "$(set_proxy --indicator 🌐)" "saving an icon uses its new message prefix"
+  set_proxy --indicator 🌐 >/dev/null
+  export http_proxy='http://127.0.0.1:7897' all_proxy='socks5://127.0.0.1:7897'
+  start_proxy > "$temp_dir/stdout" 2> "$temp_dir/stderr"
+  assert_equals '🌐 Reusing existing proxy environment.' "$(cat "$temp_dir/stderr")" "start progress uses the configured icon on stderr"
+  assert_equals $'🌐 Proxy variables enabled (current shell).\n  HTTP:  http://127.0.0.1:7897\n  SOCKS: socks5://127.0.0.1:7897' "$(cat "$temp_dir/stdout")" "start uses the configured icon and preserves endpoint formatting"
+  stop_proxy > "$temp_dir/stdout"
+  assert_equals '🌐 Stopped; previous proxy environment restored.' "$(cat "$temp_dir/stdout")" "stop uses the configured icon"
+  assert_equals 'http://127.0.0.1:7897' "$http_proxy" "message changes preserve environment restoration"
+  if set_proxy --ports 70000 > "$temp_dir/stdout" 2> "$temp_dir/stderr"; then
+    echo 'FAIL: invalid port must still fail' >&2
+    exit 1
+  fi
+  assert_equals '' "$(cat "$temp_dir/stdout")" "errors stay on stderr"
+  assert_equals '🌐 Invalid port: 70000. Use an integer from 1 to 65535.' "$(cat "$temp_dir/stderr")" "errors use the configured icon"
+  _proxycli_candidate_ports() { printf '%s\n' 7897; }
+  _proxycli_probe_url() { return 1; }
+  if scan_proxy > "$temp_dir/stdout" 2> "$temp_dir/stderr"; then
+    echo 'FAIL: unavailable proxy must still fail detection' >&2
+    exit 1
+  fi
+  case "$(cat "$temp_dir/stderr")" in
+    *'🌐 Scanning local HTTP and SOCKS5 proxies.'*'🌐 No working local proxy was detected.'*) ;;
+    *) echo 'FAIL: scan progress and failures must use the configured icon' >&2; exit 1 ;;
+  esac
+  set_proxy --indicator auto >/dev/null
+  assert_equals '🚀 Indicator: 🚀' "$(set_proxy --indicator)" "restoring the default also restores the message prefix"
+)
+
 test_indicator_settings() (
   local settings_before invalid status_output
   unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
   source "$repo_root/src/proxy-setup.sh" >/dev/null
-  assert_equals '[ProxyCli] Indicator: 🚀' "$(set_proxy --indicator)" "indicator defaults to a rocket"
+  assert_equals '🚀 Indicator: 🚀' "$(set_proxy --indicator)" "indicator defaults to a rocket"
   PROXY_ADDRESS='http://localhost:7890'
   SOCKS_ADDRESS='socks5h://localhost:7890'
   PROXYCLI_MANUAL_PROXY=0
@@ -781,7 +821,7 @@ test_indicator_settings() (
   curl() { return 0; }
 
   set_proxy --indicator '🌐' >/dev/null
-  assert_equals '[ProxyCli] Indicator: 🌐' "$(set_proxy --indicator)" "indicator query shows the configured icon"
+  assert_equals '🌐 Indicator: 🌐' "$(set_proxy --indicator)" "indicator query shows the configured icon"
   assert_equals '1' "$_PROXYCLI_AUTO_READY" "changing an indicator preserves the proxy cache"
   assert_equals '7890' "$PROXYCLI_LAST_HTTP_PORT" "changing an indicator preserves cached ports"
   assert_equals '0' "$_PROXYCLI_SETTINGS_PENDING" "indicator changes do not mark proxy settings for rescanning"
@@ -790,7 +830,7 @@ test_indicator_settings() (
     *) echo 'FAIL: all settings should include the indicator' >&2; exit 1 ;;
   esac
   source "$repo_root/src/proxy-setup.sh" >/dev/null
-  assert_equals '[ProxyCli] Indicator: 🌐' "$(set_proxy --indicator)" "reload preserves the configured indicator"
+  assert_equals '🌐 Indicator: 🌐' "$(set_proxy --indicator)" "reload preserves the configured indicator"
   _proxycli_cached_proxy_available() { return 0; }
   detect_proxy() { echo 'FAIL: indicator changes must not force detection' >&2; exit 1; }
   start_proxy >/dev/null 2>&1
@@ -812,7 +852,7 @@ test_indicator_settings() (
   fi
   assert_equals "$settings_before" "$(set_proxy)" "extra arguments preserve indicator settings"
   set_proxy --indicator auto >/dev/null
-  assert_equals '[ProxyCli] Indicator: 🚀' "$(set_proxy --indicator)" "auto restores the default indicator"
+  assert_equals '🚀 Indicator: 🚀' "$(set_proxy --indicator)" "auto restores the default indicator"
   assert_equals '🌐' "$_PROXYCLI_ACTIVE_INDICATOR" "restoring the default waits for application"
   status_output=$(proxy_status)
   case "$status_output" in
@@ -839,7 +879,7 @@ test_interactive_prompt() (
 set -eu
 unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 source "$1/src/proxy-setup.sh" >/dev/null
-assert_equals $'[ProxyCli] Proxy commands loaded.\n  Run pstart to enable the proxy, or phelp for help.' "$(source "$1/src/proxy-setup.sh")" "interactive loading explains what loaded and how to start"
+assert_equals $'🚀 Proxy commands loaded.\n  Run pstart to enable the proxy, or phelp for help.' "$(source "$1/src/proxy-setup.sh")" "interactive loading explains what loaded and how to start"
 [ -z "${PROXYCLI_ENV_SAVED+x}" ] || { echo 'FAIL: a ready notice must not enable the proxy' >&2; exit 1; }
 case "$(show_help)" in
   *$'\033'*) echo 'FAIL: captured interactive help should not contain color escapes' >&2; exit 1 ;;
@@ -878,7 +918,7 @@ set_proxy --address localhost:7890 >/dev/null
 assert_equals "$base_prompt" "$PS1" "saving settings does not add a prompt icon"
 start_proxy >/dev/null
 assert_equals "🚀 $base_prompt" "$PS1" "interactive start adds the rocket prefix"
-assert_equals $'[ProxyCli] Proxy is enabled in this shell.\n  Run pstatus to check connectivity, or phelp for help.' "$(source "$1/src/proxy-setup.sh")" "reload of an active shell reports its actual state"
+assert_equals $'🚀 Proxy is enabled in this shell.\n  Run pstatus to check connectivity, or phelp for help.' "$(source "$1/src/proxy-setup.sh")" "reload of an active shell reports its actual state"
 registered_hooks=$(typeset -p "$prompt_hook_variable")
 start_proxy >/dev/null
 source "$1/src/proxy-setup.sh" >/dev/null
@@ -907,7 +947,8 @@ run_prompt_hooks
 assert_equals '🚀 new theme> ' "$PS1" "theme refresh preserves the applied icon while a new one is pending"
 source "$1/src/proxy-setup.sh" >/dev/null
 assert_equals '🚀 new theme> ' "$PS1" "reload preserves the old applied icon"
-assert_equals '[ProxyCli] Indicator: 🌐' "$(set_proxy --indicator)" "reload preserves the new configured icon"
+assert_equals '🌐 Indicator: 🌐' "$(set_proxy --indicator)" "reload preserves the new configured icon"
+assert_equals $'🌐 Proxy is enabled in this shell.\n  Run pstatus to check connectivity, or phelp for help.' "$(source "$1/src/proxy-setup.sh")" "loading notices use the configured icon"
 start_proxy >/dev/null
 assert_equals '🌐 new theme> ' "$PS1" "applying an indicator replaces the old prefix"
 assert_equals "$registered_hooks" "$(typeset -p "$prompt_hook_variable")" "changing an indicator preserves existing prompt hooks"
@@ -1032,6 +1073,7 @@ test_installer_configuration
 test_installer_literal_paths
 test_installer_idempotence
 test_noninteractive_prompt
+test_message_indicator
 test_indicator_settings
 test_interactive_prompt
 

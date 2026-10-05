@@ -77,7 +77,7 @@ pstart
 
 - Addresses require `host:port`, with ports from `1` to `65535`. Quote IPv6 addresses: `'[::1]:7890'`. HTTP accepts `http://` or `https://`; a separate SOCKS endpoint accepts `socks5://` or `socks5h://`. Output hides proxy credentials.
 - Default scan ports: `7890 7891 7892 7893 7897 8888 8080`.
-- Icons accept a literal emoji or symbol without spaces or prompt escapes, including combined emoji such as `👩‍💻`. Quotes are optional for emoji. The default is 🚀; changing only the icon does not force a new proxy scan.
+- Icons accept a literal emoji or symbol without spaces or prompt escapes, including combined emoji such as `👩‍💻`. Quotes are optional for emoji. The default is 🚀; changing only the icon does not force a new proxy scan. Command messages use the saved icon immediately; the prompt icon changes after `pstart`.
 
 Settings survive reloading the runtime in the same session. They are not saved across terminals or shell restarts.
 

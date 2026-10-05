@@ -15,6 +15,10 @@ _PROXYCLI_DYNAMIC_PORT_LIMIT=20
 _PROXYCLI_SCAN_TIME_LIMIT=15
 _PROXYCLI_PROCESS_PATTERN='clash|mihomo|sing[-_]?box|xray|v2ray|hysteria|trojan|ss-local|sslocal|shadowsocks|tuic'
 
+_proxycli_log() {
+  printf '%s %s\n' "$_PROXYCLI_INDICATOR" "$1"
+}
+
 # Keep redirected output plain, and honor NO_COLOR even when it is empty.
 _proxycli_heading() {
   if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR+x}" ]; then
@@ -93,9 +97,9 @@ _proxycli_candidate_ports() {
     END { print result }
   ')
   if [ -n "$proxy_listeners" ]; then
-    echo "[ProxyCli] Proxy process listeners: $proxy_listeners." >&2
+    _proxycli_log "Proxy process listeners: $proxy_listeners." >&2
   else
-    echo "[ProxyCli] Proxy process listeners: none detected." >&2
+    _proxycli_log "Proxy process listeners: none detected." >&2
   fi
   {
     printf '%s\n' "${PROXYCLI_LAST_HTTP_PORT:-}" "${PROXYCLI_LAST_SOCKS_PORT:-}"
@@ -112,7 +116,7 @@ _proxycli_cached_proxy_available() {
 
   listeners="$(_proxycli_listeners)"
   if [ -z "$listeners" ]; then
-    echo "[ProxyCli] Cached check: no matching local listeners were found." >&2
+    _proxycli_log "Cached check: no matching local listeners were found." >&2
     return 1
   fi
 
@@ -125,13 +129,13 @@ _proxycli_cached_proxy_available() {
       socks*) label="SOCKS5" ;;
       *) label="HTTP" ;;
     esac
-    echo "[ProxyCli] Cached check: ${label} on 127.0.0.1:${port}." >&2
+    _proxycli_log "Cached check: ${label} on 127.0.0.1:${port}." >&2
     if ! printf '%s\n' "$listeners" | awk -v expected="$port" '$2 == expected { found = 1 } END { exit !found }'; then
-      echo "[ProxyCli] Cached check: port ${port} is no longer listening." >&2
+      _proxycli_log "Cached check: port ${port} is no longer listening." >&2
       return 1
     fi
   done
-  [ "$checked" = "1" ] && echo "[ProxyCli] Cached check: all proxy ports are listening." >&2
+  [ "$checked" = "1" ] && _proxycli_log "Cached check: all proxy ports are listening." >&2
   [ "$checked" = "1" ]
 }
 
@@ -238,31 +242,31 @@ detect_proxy() {
   local candidate_ports pending port scan_now scan_started http_port="" socks_port=""
 
   if ! command -v curl >/dev/null 2>&1; then
-    echo "[ProxyCli] curl is required for proxy detection." >&2
+    _proxycli_log "curl is required for proxy detection." >&2
     return 1
   fi
 
   candidate_ports="$(_proxycli_candidate_ports)"
   if [ -z "$candidate_ports" ]; then
-    echo "[ProxyCli] Scan: no candidate ports were found." >&2
+    _proxycli_log "Scan: no candidate ports were found." >&2
     return 1
   fi
 
-  echo "[ProxyCli] Scan candidates: $(printf '%s\n' "$candidate_ports" | awk '{ ports = ports (ports ? " " : "") $1 } END { print ports }')." >&2
+  _proxycli_log "Scan candidates: $(printf '%s\n' "$candidate_ports" | awk '{ ports = ports (ports ? " " : "") $1 } END { print ports }')." >&2
   scan_started=${SECONDS:-0}
   # Read one port per line without relying on Bash's implicit word splitting.
   while IFS= read -r port; do
     pending=""
     [ -z "$http_port" ] && pending="HTTP"
     [ -z "$socks_port" ] && pending="${pending:+$pending, }SOCKS5"
-    echo "[ProxyCli] Scanning 127.0.0.1:${port} for ${pending}." >&2
+    _proxycli_log "Scanning 127.0.0.1:${port} for ${pending}." >&2
     if [ -z "$http_port" ] && _proxycli_probe_url "http://127.0.0.1:$port"; then
       http_port="$port"
-      echo "[ProxyCli] Found HTTP proxy on port ${port}." >&2
+      _proxycli_log "Found HTTP proxy on port ${port}." >&2
     fi
     if [ -z "$socks_port" ] && _proxycli_probe_url "socks5h://127.0.0.1:$port"; then
       socks_port="$port"
-      echo "[ProxyCli] Found SOCKS5 proxy on port ${port}." >&2
+      _proxycli_log "Found SOCKS5 proxy on port ${port}." >&2
     fi
     [ -n "$http_port" ] && [ -n "$socks_port" ] && break
     scan_now=${SECONDS:-0}
@@ -274,7 +278,7 @@ $candidate_ports
 EOF
 
   if [ -z "$http_port" ] && [ -z "$socks_port" ]; then
-    echo "[ProxyCli] No working local proxy was detected." >&2
+    _proxycli_log "No working local proxy was detected." >&2
     return 1
   fi
 
@@ -293,7 +297,7 @@ EOF
     unset PROXYCLI_LAST_SOCKS_PORT
   fi
   _PROXYCLI_AUTO_READY=1
-  echo "[ProxyCli] Detected${http_port:+ HTTP on port $http_port}${socks_port:+ SOCKS5 on port $socks_port}." >&2
+  _proxycli_log "Detected${http_port:+ HTTP on port $http_port}${socks_port:+ SOCKS5 on port $socks_port}." >&2
 }
 
 _proxycli_proxy_active() {
@@ -392,7 +396,7 @@ _proxycli_apply_environment() {
 
 _proxycli_activate_proxy() {
   if [ -z "${PROXY_ADDRESS:-}" ] && [ -z "${SOCKS_ADDRESS:-}" ]; then
-    echo "[ProxyCli] Set a proxy with: pset --address host:port" >&2
+    _proxycli_log "Set a proxy with: pset --address host:port" >&2
     return 1
   fi
 
@@ -400,7 +404,7 @@ _proxycli_activate_proxy() {
   _PROXYCLI_SETTINGS_PENDING=0
   _PROXYCLI_ACTIVE_INDICATOR="$_PROXYCLI_INDICATOR"
   _proxycli_enable_prompt
-  echo "[ProxyCli] Proxy variables enabled (current shell)."
+  _proxycli_log "Proxy variables enabled (current shell)."
   _proxycli_print_endpoints "${PROXY_ADDRESS:-}" "${SOCKS_ADDRESS:-}"
 }
 
@@ -412,15 +416,15 @@ start_proxy() {
       detect_proxy || return 1
     elif [ "$_PROXYCLI_AUTO_READY" = "1" ]; then
       if _proxycli_cached_proxy_available; then
-        echo "[ProxyCli] Reusing the last detected proxy." >&2
+        _proxycli_log "Reusing the last detected proxy." >&2
       else
-        echo "[ProxyCli] Cached proxy unavailable; rescanning." >&2
+        _proxycli_log "Cached proxy unavailable; rescanning." >&2
         detect_proxy || return 1
       fi
     elif _proxycli_use_existing_proxy; then
-      echo "[ProxyCli] Reusing existing proxy environment." >&2
+      _proxycli_log "Reusing existing proxy environment." >&2
     elif ! detect_proxy; then
-      echo "[ProxyCli] Try pset --address host:port, then pstart." >&2
+      _proxycli_log "Try pset --address host:port, then pstart." >&2
       return 1
     fi
   fi
@@ -430,7 +434,7 @@ start_proxy() {
 
 scan_proxy() {
   _proxycli_no_arguments pscan "$@" || return 1
-  echo "[ProxyCli] Scanning local HTTP and SOCKS5 proxies." >&2
+  _proxycli_log "Scanning local HTTP and SOCKS5 proxies." >&2
   detect_proxy || return 1
 
   PROXYCLI_MANUAL_PROXY=0
@@ -440,13 +444,13 @@ scan_proxy() {
 stop_proxy() {
   _proxycli_no_arguments pstop "$@" || return 1
   if ! _proxycli_proxy_active; then
-    echo "[ProxyCli] Inactive; environment unchanged."
+    _proxycli_log "Inactive; environment unchanged."
     return 0
   fi
 
   _proxycli_restore_environment
   _proxycli_refresh_prompt
-  echo "[ProxyCli] Stopped; previous proxy environment restored."
+  _proxycli_log "Stopped; previous proxy environment restored."
 }
 
 toggle_proxy() {
@@ -464,19 +468,19 @@ proxy_status() {
   current_http="${http_proxy:-${HTTP_PROXY:-${https_proxy:-${HTTPS_PROXY:-}}}}"
   current_socks="${all_proxy:-${ALL_PROXY:-}}"
   if _proxycli_proxy_active; then
-    echo "[ProxyCli] Status: ACTIVE (current shell)"
+    _proxycli_log "Status: ACTIVE (current shell)"
   else
-    echo "[ProxyCli] Status: INACTIVE (current shell)"
+    _proxycli_log "Status: INACTIVE (current shell)"
   fi
   _proxycli_print_endpoints "$current_http" "$current_socks"
   if [ "$_PROXYCLI_SETTINGS_PENDING" = "1" ] ||
      [ "$_PROXYCLI_INDICATOR" != "$_PROXYCLI_ACTIVE_INDICATOR" ]; then
-    echo "[ProxyCli] Settings pending; run pstart to apply."
+    _proxycli_log "Settings pending; run pstart to apply."
   fi
   [ -n "$current_http" ] || [ -n "$current_socks" ] || return 0
 
   command -v curl >/dev/null 2>&1 || {
-    echo "[ProxyCli] curl is required for connectivity checks." >&2
+    _proxycli_log "curl is required for connectivity checks." >&2
     return 1
   }
 
@@ -561,7 +565,7 @@ set_proxy() {
   local option
 
   if [ "$#" -eq 0 ]; then
-    echo "[ProxyCli] Current settings:"
+    _proxycli_log "Current settings:"
     _proxycli_show_address_setting
     echo "  Scan ports: $_PROXYCLI_SCAN_PORTS"
     printf '  Indicator: %s\n' "$_PROXYCLI_INDICATOR"
@@ -575,7 +579,7 @@ set_proxy() {
     --ports) _proxycli_set_scan_ports "$@" ;;
     --indicator) _proxycli_set_indicator "$@" ;;
     *)
-      printf '[ProxyCli] Unknown setting: %s. Run phelp for usage.\n' "$option" >&2
+      _proxycli_log "Unknown setting: $option. Run phelp for usage." >&2
       return 1
       ;;
   esac
@@ -597,7 +601,7 @@ _proxycli_set_address() {
     PROXYCLI_MANUAL_PROXY=0
     _proxycli_mark_settings_changed
     unset PROXY_ADDRESS SOCKS_ADDRESS
-    echo "[ProxyCli] Address: automatic detection. Run pstart to apply."
+    _proxycli_log "Address: automatic detection. Run pstart to apply."
     return 0
   fi
 
@@ -611,7 +615,7 @@ _proxycli_set_address() {
 
   if ! new_http=$(_proxycli_normalize_address "$http_input" http) ||
      ! new_socks=$(_proxycli_normalize_address "$socks_input" socks5); then
-    echo "[ProxyCli] Invalid address. Use host:port (port 1-65535); bracket IPv6 hosts." >&2
+    _proxycli_log "Invalid address. Use host:port (port 1-65535); bracket IPv6 hosts." >&2
     echo "Usage: pset --address [http://]host:port [socks5://host:port]" >&2
     return 1
   fi
@@ -621,7 +625,7 @@ _proxycli_set_address() {
 
   PROXYCLI_MANUAL_PROXY=1
   _proxycli_mark_settings_changed
-  echo "[ProxyCli] Address saved. Run pstart to apply."
+  _proxycli_log "Address saved. Run pstart to apply."
   _proxycli_show_address_setting
 }
 
@@ -629,7 +633,7 @@ _proxycli_set_indicator() {
   local indicator="${1:-}"
 
   if [ "$#" -eq 0 ]; then
-    printf '[ProxyCli] Indicator: %s\n' "$_PROXYCLI_INDICATOR"
+    _proxycli_log "Indicator: $_PROXYCLI_INDICATOR"
     return 0
   fi
   if [ "$#" -ne 1 ]; then
@@ -640,19 +644,19 @@ _proxycli_set_indicator() {
   # Prompt strings interpret shell escapes, so accept only literal symbols.
   case "$indicator" in
     ''|-*|*[[:space:][:cntrl:]]*|*'$'*|*'`'*|*'\'*|*'%'*|*'!'*)
-      echo "[ProxyCli] Invalid indicator. Use one emoji or symbol without spaces or prompt escapes." >&2
+      _proxycli_log "Invalid indicator. Use one emoji or symbol without spaces or prompt escapes." >&2
       return 1
       ;;
   esac
   _PROXYCLI_INDICATOR="$indicator"
-  printf '[ProxyCli] Indicator saved: %s. Run pstart to apply.\n' "$_PROXYCLI_INDICATOR"
+  _proxycli_log "Indicator saved: $_PROXYCLI_INDICATOR. Run pstart to apply."
 }
 
 _proxycli_set_scan_ports() {
   local input port ports=""
 
   if [ "$#" -eq 0 ]; then
-    echo "[ProxyCli] Scan ports: $_PROXYCLI_SCAN_PORTS"
+    _proxycli_log "Scan ports: $_PROXYCLI_SCAN_PORTS"
     return 0
   fi
   if [ "$1" = auto ]; then
@@ -664,7 +668,7 @@ _proxycli_set_scan_ports() {
   else
     for input in "$@"; do
       if ! port=$(_proxycli_normalize_port "$input"); then
-        printf '[ProxyCli] Invalid port: %s. Use an integer from 1 to 65535.\n' "$input" >&2
+        _proxycli_log "Invalid port: $input. Use an integer from 1 to 65535." >&2
         return 1
       fi
       case " $ports " in
@@ -676,7 +680,7 @@ _proxycli_set_scan_ports() {
 
   _PROXYCLI_SCAN_PORTS="$ports"
   _proxycli_mark_settings_changed
-  echo "[ProxyCli] Scan ports saved: $_PROXYCLI_SCAN_PORTS. Run pstart to apply."
+  _proxycli_log "Scan ports saved: $_PROXYCLI_SCAN_PORTS. Run pstart to apply."
 }
 
 show_help() {
@@ -726,10 +730,10 @@ _PROXYCLI_RUNTIME_LOADED=1
 case "$-" in
   *i*)
     if _proxycli_proxy_active; then
-      _proxycli_heading '[ProxyCli] Proxy is enabled in this shell.'
+      _proxycli_heading "$_PROXYCLI_INDICATOR Proxy is enabled in this shell."
       printf '  Run pstatus to check connectivity, or phelp for help.\n'
     else
-      _proxycli_heading '[ProxyCli] Proxy commands loaded.'
+      _proxycli_heading "$_PROXYCLI_INDICATOR Proxy commands loaded."
       printf '  Run pstart to enable the proxy, or phelp for help.\n'
     fi
     ;;
