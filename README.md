@@ -122,4 +122,4 @@ Tests run offline. Contributions are welcome; keep both guides aligned with comm
 
 ## Sponsors
 
-Sponsored by [ForZTN](https://sponsorship.forztn.com/github.com/*).
+Sponsored by [ForZTN](https://sponsorship.forztn.com/github.com/ProxyCli).
