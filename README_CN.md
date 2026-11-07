@@ -122,4 +122,4 @@ bash install.sh --help
 
 ## Sponsors
 
-Sponsored by [ForZTN](https://sponsorship.forztn.com/github.com/*).
+Sponsored by [ForZTN](https://sponsorship.forztn.com/github.com/ProxyCli).
