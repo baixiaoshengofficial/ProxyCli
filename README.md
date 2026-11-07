@@ -119,3 +119,7 @@ bash install.sh --help
 Tests run offline. Contributions are welcome; keep both guides aligned with command behavior.
 
 [MIT License](LICENSE) · [GitHub](https://github.com/baixiaoshengofficial/ProxyCli)
+
+## Sponsors
+
+Sponsored by [ForZTN](https://sponsorship.forztn.com/github.com/*).
