@@ -119,3 +119,7 @@ bash install.sh --help
 测试无需联网。欢迎提交改进，请保持两份文档与命令行为一致。
 
 [MIT 许可证](LICENSE) · [GitHub](https://github.com/baixiaoshengofficial/ProxyCli)
+
+## Sponsors
+
+Sponsored by [ForZTN](https://sponsorship.forztn.com/github.com/*).
